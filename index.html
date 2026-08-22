@@ -181,7 +181,7 @@
     padding-top: 28px;
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: 10px;
     align-items: center;
     text-align: center;
   }
@@ -206,10 +206,25 @@
     border-radius: 3px;
   }
 
+  /*
+    Apple puts "Designed by Apple in California" on the box, and it works
+    because it is stated plainly and then left alone. So: no italics, no
+    flourish, just the sentence — and its own line, above the administrative
+    one, because it is the only line here that is about a person.
+  */
+  .origin {
+    color: var(--text);
+    font-size: 14px;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    margin: 0;
+  }
+
   .colophon {
     color: var(--secondary);
     font-size: 13px;
     margin: 0;
+    opacity: 0.85;
   }
 
   @media (max-width: 420px) {
@@ -270,7 +285,8 @@
       <a href="https://tayka-pic.github.io/tayka-pages/">Privacy Policy</a>
       <a href="mailto:tayka@att.net">Contact</a>
     </nav>
-    <p class="colophon">Made by one person. Abuse reports are answered within 48 hours.</p>
+    <p class="origin">Made with love in Miami, Florida, USA</p>
+    <p class="colophon">Built by one person. Abuse reports are answered within 48&nbsp;hours.</p>
   </footer>
 
 </div>
