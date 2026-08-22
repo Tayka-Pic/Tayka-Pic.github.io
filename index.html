@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tayka — one photo prompt a day</title>
+<meta name="description" content="One photo prompt a day. Everyone in the world gets the same one at the same moment, and you can't see anyone else's answer until you post your own.">
+
+<meta property="og:title" content="Tayka">
+<meta property="og:description" content="One photo prompt a day. Everyone gets the same one at the same moment, and you can't see anyone else's until you post your own.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://tayka-pic.github.io/">
+
+<style>
+  /*
+    Tayka's own palette, taken from Theme.Share in the app — the one fixed,
+    non-dynamic set. Same reasoning as the share card: this page is what
+    someone meets before they have the app, so it should look like Tayka
+    rather than like whatever mode their phone happens to be in.
+  */
+  :root {
+    --ground:    #08090f;
+    --panel:     #131725;
+    --hairline:  #232b42;
+    --text:      #ffffff;
+    --secondary: #9da8c1;
+    --accent:    #5b8def;
+  }
+
+  * { box-sizing: border-box; }
+
+  html { -webkit-text-size-adjust: 100%; }
+
+  body {
+    margin: 0;
+    padding: 0;
+    background: var(--ground);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text",
+                 "Segoe UI", Roboto, sans-serif;
+    font-size: 17px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: 560px;
+    margin: 0 auto;
+    padding: 72px 24px 56px;
+    display: flex;
+    flex-direction: column;
+    gap: 44px;
+  }
+
+  /*
+    TAYKA, black weight, widely letterspaced, in the default face — not a
+    rounded one. Tracking is 0.23 of the type size, which is the ratio
+    TaykaWordmark and tools/make-app-icon.swift both use. The trailing letter
+    also carries the tracking, so the leading padding puts the word back in
+    the optical middle.
+  */
+  .wordmark {
+    font-weight: 900;
+    letter-spacing: 0.23em;
+    padding-left: 0.23em;
+    color: var(--accent);
+    margin: 0;
+    line-height: 1;
+  }
+  .wordmark--hero   { font-size: 44px; }
+  .wordmark--footer { font-size: 15px; }
+
+  .thesis {
+    font-size: 25px;
+    font-weight: 600;
+    line-height: 1.3;
+    margin: 20px 0 0;
+    text-wrap: balance;
+  }
+
+  .thesis em {
+    font-style: normal;
+    color: var(--accent);
+  }
+
+  .lede {
+    color: var(--secondary);
+    margin: 14px 0 0;
+  }
+
+  /*
+    Numbered because it genuinely is a sequence — the order is how one Tayka
+    day runs, and the third step only exists because of the second.
+  */
+  .rules {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    counter-reset: rule;
+  }
+
+  .rules li {
+    counter-increment: rule;
+    display: grid;
+    grid-template-columns: 40px 1fr;
+    gap: 16px;
+    align-items: baseline;
+    padding: 20px 20px 20px 18px;
+    background: var(--panel);
+    border: 1px solid var(--hairline);
+  }
+  .rules li:first-child { border-radius: 14px 14px 0 0; }
+  .rules li:last-child  { border-radius: 0 0 14px 14px; }
+  .rules li + li        { border-top: none; }
+
+  .rules li::before {
+    content: counter(rule);
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: 0.08em;
+    color: var(--accent);
+    border: 1px solid var(--hairline);
+    border-radius: 999px;
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transform: translateY(2px);
+  }
+
+  .rules h2 {
+    font-size: 17px;
+    font-weight: 600;
+    margin: 0 0 4px;
+  }
+
+  .rules p {
+    margin: 0;
+    color: var(--secondary);
+    font-size: 15.5px;
+    line-height: 1.5;
+  }
+
+  .status {
+    border: 1px solid var(--hairline);
+    border-radius: 14px;
+    padding: 22px 24px;
+    text-align: center;
+  }
+
+  .status .badge {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 8px;
+  }
+
+  .status p {
+    margin: 0;
+    color: var(--secondary);
+    font-size: 15.5px;
+  }
+
+  .invited {
+    color: var(--secondary);
+    font-size: 15.5px;
+    margin: 0;
+  }
+  .invited strong { color: var(--text); font-weight: 600; }
+
+  footer {
+    border-top: 1px solid var(--hairline);
+    padding-top: 28px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    align-items: center;
+    text-align: center;
+  }
+
+  .links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 22px;
+    justify-content: center;
+    font-size: 15px;
+  }
+
+  a {
+    color: var(--accent);
+    text-decoration-thickness: 1px;
+    text-underline-offset: 3px;
+  }
+  a:hover { text-decoration: none; }
+  a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 3px;
+  }
+
+  .colophon {
+    color: var(--secondary);
+    font-size: 13px;
+    margin: 0;
+  }
+
+  @media (max-width: 420px) {
+    .page { padding: 52px 20px 44px; gap: 36px; }
+    .wordmark--hero { font-size: 36px; }
+    .thesis { font-size: 22px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="page">
+
+  <header>
+    <h1 class="wordmark wordmark--hero">TAYKA</h1>
+    <p class="thesis">One photo prompt a day.<br>Everyone, <em>everywhere</em>, at once.</p>
+    <p class="lede">The same prompt lands on every phone in the world at the
+    same instant. You get one photo to answer it.</p>
+  </header>
+
+  <ol class="rules">
+    <li>
+      <div>
+        <h2>The prompt arrives</h2>
+        <p>Every day at the same moment, everywhere. Not a prompt chosen for
+        you — the prompt, the one everyone else just got too.</p>
+      </div>
+    </li>
+    <li>
+      <div>
+        <h2>You take one photo</h2>
+        <p>Retake it as many times as you like. You still only post once, and
+        the day is stamped by the server, so nobody gets two.</p>
+      </div>
+    </li>
+    <li>
+      <div>
+        <h2>Then the feed opens</h2>
+        <p>Not before. You can't see how anyone else answered until you've
+        answered yourself — that's the whole app, and it's enforced by the
+        database, not by a screen that politely asks you to wait.</p>
+      </div>
+    </li>
+  </ol>
+
+  <p class="invited">Someone sent you here? They'll have included their
+  handle — <strong>search it in the app once you're in</strong>, and their
+  Tayks show up in your feed from the next prompt onward.</p>
+
+  <div class="status">
+    <span class="badge">Coming soon</span>
+    <p>Tayka is in the final stretch before the App Store. iPhone first.</p>
+  </div>
+
+  <footer>
+    <p class="wordmark wordmark--footer">TAYKA</p>
+    <nav class="links">
+      <a href="https://tayka-pic.github.io/tayka-pages/">Privacy Policy</a>
+      <a href="mailto:tayka@att.net">Contact</a>
+    </nav>
+    <p class="colophon">Made by one person. Abuse reports are answered within 48 hours.</p>
+  </footer>
+
+</div>
+
+</body>
+</html>
