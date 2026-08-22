@@ -182,7 +182,14 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
-    align-items: center;
+    /*
+      `stretch`, not `center`. In a column flex container, centring sizes each
+      child to its own max-content width — so a line longer than the column
+      overflows the page instead of wrapping, and the last words get clipped
+      off the right edge. Full-width children plus text-align do the same job
+      and wrap properly.
+    */
+    align-items: stretch;
     text-align: center;
   }
 
@@ -249,30 +256,29 @@
     <li>
       <div>
         <h2>The prompt arrives</h2>
-        <p>Every day at the same moment, everywhere. Not a prompt chosen for
-        you — the prompt, the one everyone else just got too.</p>
+        <p>Once a day, at the same moment, everywhere in the world. It isn't
+        picked for you — it's the one everybody else just got too.</p>
       </div>
     </li>
     <li>
       <div>
         <h2>You take one photo</h2>
-        <p>Retake it as many times as you like. You still only post once, and
-        the day is stamped by the server, so nobody gets two.</p>
+        <p>Retake it as many times as you like before you post. Once it's up,
+        that's your answer for the day.</p>
       </div>
     </li>
     <li>
       <div>
         <h2>Then the feed opens</h2>
-        <p>Not before. You can't see how anyone else answered until you've
-        answered yourself — that's the whole app, and it's enforced by the
-        database, not by a screen that politely asks you to wait.</p>
+        <p>You can't see how your friends answered until you've answered
+        yourself. No lurking — that's the whole point.</p>
       </div>
     </li>
   </ol>
 
-  <p class="invited">Someone sent you here? They'll have included their
-  handle — <strong>search it in the app once you're in</strong>, and their
-  Tayks show up in your feed from the next prompt onward.</p>
+  <p class="invited">Someone sent you here? Their username will be in the
+  message — <strong>search for it once you're in</strong> and their Tayks
+  will show up in your feed.</p>
 
   <div class="status">
     <span class="badge">Coming soon</span>
@@ -286,7 +292,7 @@
       <a href="mailto:tayka@att.net">Contact</a>
     </nav>
     <p class="origin">Made with love in Miami, Florida, USA</p>
-    <p class="colophon">Built by one person. Abuse reports are answered within 48&nbsp;hours.</p>
+    <p class="colophon">Built by one person. Abuse reports are answered within 48 hours.</p>
   </footer>
 
 </div>
