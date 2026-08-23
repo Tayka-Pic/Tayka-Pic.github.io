@@ -234,6 +234,20 @@
     opacity: 0.85;
   }
 
+  /*
+    The support address is written out rather than hidden behind the word
+    "Contact". A mailto: link does nothing at all on a device with no mail
+    client configured: no error, no feedback, nothing happens. Printing the
+    address means it can be read and copied by hand, which is the only version
+    that works for everybody. It stays a link as well, so it is still one tap
+    for the people who do have mail set up.
+  */
+  .colophon a {
+    color: inherit;
+    text-decoration-color: var(--accent);
+  }
+  .colophon a:hover { color: var(--text); }
+
   @media (max-width: 420px) {
     .page { padding: 52px 20px 44px; gap: 36px; }
     .wordmark--hero { font-size: 36px; }
@@ -293,7 +307,8 @@
       <a href="mailto:support@tayka.app">Contact</a>
     </nav>
     <p class="origin">Made with love in Miami, Florida, USA</p>
-    <p class="colophon">Built by one person. Abuse reports are answered within 48 hours.</p>
+    <p class="colophon">Built by one person. Abuse reports are answered within
+    48 hours at <a href="mailto:support@tayka.app">support@tayka.app</a>.</p>
   </footer>
 
 </div>
