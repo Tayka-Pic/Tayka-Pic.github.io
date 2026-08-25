@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Suggest a Tayka prompt</title>
-<meta name="description" content="Suggest a photo prompt for Tayka. Every user in the world gets one prompt a day — this is where they come from.">
+<meta name="description" content="Suggest a photo prompt for Tayka. Everyone in the world gets the same prompt on the same day. This is where they come from.">
 <meta name="robots" content="noindex">
 
 <meta property="og:title" content="Suggest a Tayka prompt">
@@ -195,8 +195,9 @@
 
   <header>
     <h1>Suggest a prompt</h1>
-    <p class="lede">Every day, everyone in the world gets one photo prompt.
-    They come from somewhere — this is where. Send as many as you like.</p>
+    <p class="lede">Every day, everyone in the world gets the same photo prompt.
+    They all came from somewhere, and this is where. Send as many as you
+    like.</p>
   </header>
 
   <form id="suggestion-form" novalidate>
@@ -230,7 +231,7 @@
 
   <div class="done" id="done">
     <span class="badge">Sent</span>
-    <p>Thanks — your prompt is in.</p>
+    <p>Thanks. Your prompt is in.</p>
   </div>
 
   <footer>
@@ -292,7 +293,7 @@
       done.style.display = "block";
     }).catch(function () {
       status.dataset.state = "error";
-      status.textContent = "Couldn't send that — check your connection and try again.";
+      status.textContent = "Couldn't send that. Check your connection and try again.";
       button.disabled = false;
     });
   });

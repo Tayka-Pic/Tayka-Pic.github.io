@@ -169,6 +169,55 @@
     font-size: 15.5px;
   }
 
+  /*
+    The one thing a visitor can actually do.
+
+    Deliberately more than a footer link. Until there is an App Store listing
+    this page offers no action at all — the status box above it says "coming
+    soon" and that is a dead end — so the suggestion form is the only live
+    thing on tayka.app, and it sits directly under the sentence that explains
+    why there is nothing to download yet.
+
+    Bordered rather than a filled accent button, which is what a call to
+    action usually gets. White on this blue is around 3.3:1, fine for large
+    type and not for a 16px label, and the page has no filled buttons anywhere
+    else. Prominence here comes from position and from having its own card,
+    which is enough on a page this spare.
+  */
+  .suggest {
+    border: 1px solid var(--hairline);
+    border-radius: 14px;
+    padding: 22px 24px;
+    background: var(--panel);
+    text-align: center;
+  }
+
+  .suggest h2 {
+    font-size: 17px;
+    font-weight: 600;
+    margin: 0 0 6px;
+  }
+
+  .suggest p {
+    margin: 0 0 16px;
+    color: var(--secondary);
+    font-size: 15.5px;
+  }
+
+  .suggest-link {
+    display: inline-block;
+    font-weight: 600;
+    font-size: 15.5px;
+    padding: 10px 22px;
+    border: 1px solid var(--accent);
+    border-radius: 999px;
+    text-decoration: none;
+  }
+  .suggest-link:hover {
+    background: var(--accent);
+    color: var(--ground);
+  }
+
   .invited {
     color: var(--secondary);
     font-size: 15.5px;
@@ -299,9 +348,17 @@
     <p>Tayka is in the final stretch before the App Store. iPhone first.</p>
   </div>
 
+  <div class="suggest">
+    <h2>Suggest a prompt</h2>
+    <p>Every prompt Tayka has ever asked came from somewhere. No account
+    needed, and you can send as many as you like.</p>
+    <a class="suggest-link" href="/suggestions/">Send an idea</a>
+  </div>
+
   <footer>
     <p class="wordmark wordmark--footer">TAYKA</p>
     <nav class="links">
+      <a href="/suggestions/">Suggest a Prompt</a>
       <a href="/privacy/">Privacy Policy</a>
       <a href="/terms/">Terms of Use</a>
       <a href="mailto:support@tayka.app">Contact</a>
