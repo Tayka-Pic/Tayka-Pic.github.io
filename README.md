@@ -11,6 +11,7 @@ outside world needs to see.
 | `index.html` | Landing page. Where an invite link points until the App Store listing exists. |
 | `privacy/index.html` | Privacy policy. The canonical copy, and App Store submission requires a reachable URL. |
 | `terms/index.html` | Terms of Use. Guideline 1.2 requires users to agree to these, so the sign-in screen links here. |
+| `suggestions/index.html` | Public prompt-suggestion form. Posts straight to Supabase with the anon key — no sign-in, no build step. Read from the app's Admin screen (`list_prompt_suggestions()`, `supabase/51_prompt_suggestions.sql`). |
 | `app-ads.txt` | Authorizes Google to sell Tayka's ad inventory, so a spoofer cannot claim it. Takes effect once an App Store listing names this site as the marketing URL. |
 | `CNAME` | Holds `tayka.app`. This file is what tells GitHub Pages to serve the site on the custom domain, so deleting it silently moves the site back to `tayka-pic.github.io` and breaks every link the App Store listing points at. |
 

@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Suggest a Tayka prompt</title>
+<meta name="description" content="Suggest a photo prompt for Tayka. Every user in the world gets one prompt a day — this is where they come from.">
+<meta name="robots" content="noindex">
+
+<meta property="og:title" content="Suggest a Tayka prompt">
+<meta property="og:description" content="Suggest a photo prompt for Tayka.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://tayka.app/suggestions/">
+
+<style>
+  /* Same palette as the landing page — see ../index.html. */
+  :root {
+    --ground:    #08090f;
+    --panel:     #131725;
+    --hairline:  #232b42;
+    --text:      #ffffff;
+    --secondary: #9da8c1;
+    --accent:    #5b8def;
+    --danger:    #ff6b6b;
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+
+  body {
+    margin: 0;
+    padding: 0;
+    background: var(--ground);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text",
+                 "Segoe UI", Roboto, sans-serif;
+    font-size: 17px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: 480px;
+    margin: 0 auto;
+    padding: 56px 24px 56px;
+    display: flex;
+    flex-direction: column;
+    gap: 32px;
+  }
+
+  .home {
+    display: inline-block;
+    font-weight: 900;
+    letter-spacing: 0.23em;
+    padding-left: 0.23em;
+    font-size: 15px;
+    color: var(--accent);
+    text-decoration: none;
+  }
+  .home:hover { text-decoration: underline; text-underline-offset: 4px; }
+
+  h1 {
+    font-size: 25px;
+    font-weight: 600;
+    line-height: 1.3;
+    margin: 4px 0 0;
+    text-wrap: balance;
+  }
+
+  .lede {
+    color: var(--secondary);
+    margin: 0;
+  }
+
+  form {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    background: var(--panel);
+    border: 1px solid var(--hairline);
+    border-radius: 14px;
+    padding: 22px;
+  }
+
+  label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--secondary);
+    margin-bottom: 6px;
+  }
+
+  .required { color: var(--accent); }
+
+  textarea, input[type="text"] {
+    width: 100%;
+    background: var(--ground);
+    border: 1px solid var(--hairline);
+    border-radius: 10px;
+    padding: 12px 14px;
+    color: var(--text);
+    font: inherit;
+    font-size: 16px; /* keeps iOS Safari from zooming on focus */
+  }
+  textarea { resize: vertical; min-height: 84px; }
+  textarea:focus, input[type="text"]:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  ::placeholder { color: var(--secondary); opacity: 0.6; }
+
+  .hint {
+    font-size: 13px;
+    color: var(--secondary);
+    margin: 6px 0 0;
+  }
+
+  /* Honeypot — invisible to a person, tempting to a bot. Left blank on any
+     real submission. */
+  .trap {
+    position: absolute;
+    left: -9999px;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+  }
+
+  button {
+    appearance: none;
+    border: none;
+    border-radius: 10px;
+    background: var(--accent);
+    color: #ffffff;
+    font: inherit;
+    font-size: 16px;
+    font-weight: 600;
+    padding: 13px 18px;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.6; cursor: default; }
+  button:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+
+  .status {
+    font-size: 14.5px;
+    margin: 0;
+    min-height: 1.4em;
+  }
+  .status[data-state="error"] { color: var(--danger); }
+  .status[data-state="ok"] { color: var(--secondary); }
+
+  .done {
+    display: none;
+    border: 1px solid var(--hairline);
+    border-radius: 14px;
+    padding: 22px;
+    text-align: center;
+  }
+  .done .badge {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 8px;
+  }
+  .done p { margin: 0; color: var(--secondary); font-size: 15.5px; }
+
+  footer {
+    border-top: 1px solid var(--hairline);
+    padding-top: 24px;
+    text-align: center;
+  }
+  footer a {
+    color: var(--accent);
+    text-underline-offset: 3px;
+  }
+  footer a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 3px;
+  }
+
+  @media (max-width: 420px) {
+    .page { padding: 44px 20px 44px; gap: 28px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="page">
+
+  <a class="home" href="../">TAYKA</a>
+
+  <header>
+    <h1>Suggest a prompt</h1>
+    <p class="lede">Every day, everyone in the world gets one photo prompt.
+    They come from somewhere — this is where. Send as many as you like.</p>
+  </header>
+
+  <form id="suggestion-form" novalidate>
+    <div>
+      <label for="suggestion">Your prompt idea <span class="required">*</span></label>
+      <textarea id="suggestion" name="suggestion" maxlength="300" required
+        placeholder="something that only exists at night"></textarea>
+    </div>
+
+    <div>
+      <label for="username">Your Tayka username (optional)</label>
+      <input type="text" id="username" name="username" maxlength="30"
+        autocapitalize="off" autocorrect="off" placeholder="not checked, just so we know who to credit">
+    </div>
+
+    <div>
+      <label for="referral">Referral code (optional)</label>
+      <input type="text" id="referral" name="referral" maxlength="30"
+        autocapitalize="off" autocorrect="off" placeholder="if someone gave you one">
+      <p class="hint">Only if someone at Tayka gave you a code directly.</p>
+    </div>
+
+    <div class="trap" aria-hidden="true">
+      <label for="website">Leave this blank</label>
+      <input type="text" id="website" name="website" tabindex="-1" autocomplete="off">
+    </div>
+
+    <button type="submit" id="submit-button">Send suggestion</button>
+    <p class="status" id="status" role="status"></p>
+  </form>
+
+  <div class="done" id="done">
+    <span class="badge">Sent</span>
+    <p>Thanks — your prompt is in.</p>
+  </div>
+
+  <footer>
+    <a href="../">Back to tayka.app</a>
+  </footer>
+
+</div>
+
+<script>
+(function () {
+  var SUPABASE_URL = "https://tvxzrvrevpxjwvzfuhom.supabase.co";
+  var SUPABASE_ANON_KEY = "sb_publishable_54Y1iL6XfdJ8tFE_2kjB5A_3DqOqIe0";
+
+  var form = document.getElementById("suggestion-form");
+  var status = document.getElementById("status");
+  var button = document.getElementById("submit-button");
+  var done = document.getElementById("done");
+
+  form.addEventListener("submit", function (event) {
+    event.preventDefault();
+
+    if (document.getElementById("website").value.trim() !== "") {
+      // Honeypot tripped. Say nothing useful to whatever filled it in.
+      form.reset();
+      form.style.display = "none";
+      done.style.display = "block";
+      return;
+    }
+
+    var suggestion = document.getElementById("suggestion").value.trim();
+    if (!suggestion) {
+      status.dataset.state = "error";
+      status.textContent = "Type a prompt idea first.";
+      return;
+    }
+
+    var payload = { suggestion: suggestion };
+    var username = document.getElementById("username").value.trim();
+    var referral = document.getElementById("referral").value.trim();
+    if (username) payload.submitted_username = username;
+    if (referral) payload.referral_code = referral;
+
+    button.disabled = true;
+    status.dataset.state = "ok";
+    status.textContent = "Sending…";
+
+    fetch(SUPABASE_URL + "/rest/v1/prompt_suggestions", {
+      method: "POST",
+      headers: {
+        "apikey": SUPABASE_ANON_KEY,
+        "Authorization": "Bearer " + SUPABASE_ANON_KEY,
+        "Content-Type": "application/json",
+        "Prefer": "return=minimal"
+      },
+      body: JSON.stringify(payload)
+    }).then(function (response) {
+      if (!response.ok) throw new Error("request failed");
+      form.style.display = "none";
+      done.style.display = "block";
+    }).catch(function () {
+      status.dataset.state = "error";
+      status.textContent = "Couldn't send that — check your connection and try again.";
+      button.disabled = false;
+    });
+  });
+})();
+</script>
+
+</body>
+</html>
