@@ -126,6 +126,31 @@
   .cell .when  { font-size: 11px; letter-spacing: .06em; color: var(--secondary); text-transform: uppercase; }
   .cell .what  { margin-top: 4px; }
   .cell .edited { font-size: 11px; color: var(--accent); font-weight: 700; }
+
+  .stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+  .stat {
+    background: var(--panel); border: 1px solid var(--hairline);
+    border-radius: 12px; padding: 12px 14px;
+  }
+  .stat .n { font-size: 26px; font-weight: 700; line-height: 1.1; }
+  .stat .n small { font-size: 15px; color: var(--secondary); font-weight: 400; }
+  .stat .k { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--secondary); margin-top: 2px; }
+  .stat.alert .n { color: var(--danger); }
+
+  .widgets { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
+  .widget {
+    background: var(--panel); border: 1px solid var(--hairline); border-radius: 12px;
+    padding: 14px; text-align: left; color: inherit; font: inherit; cursor: pointer;
+  }
+  .widget:hover { border-color: var(--accent); }
+  .widget h3 { margin: 0 0 4px; font-size: 15px; }
+  .widget .sub { color: var(--secondary); font-size: 13px; }
+  .preview {
+    background: var(--ground); border: 1px solid var(--hairline);
+    border-radius: 10px; padding: 12px 14px; margin: 8px 0;
+  }
+  .preview .lead { color: var(--secondary); font-size: 13px; }
+  .preview .line { font-size: 17px; font-weight: 600; margin-top: 2px; }
   td { padding: 8px 0; border-bottom: 1px solid var(--hairline); vertical-align: top; }
 </style>
 </head>
@@ -135,7 +160,8 @@
   <span class="wordmark">TAYKA</span>
   <span class="muted" id="who"></span>
   <nav id="nav" hidden>
-    <button data-tab="reports" aria-current="true">Reports</button>
+    <button data-tab="home" aria-current="true">Home</button>
+    <button data-tab="reports">Reports</button>
     <button data-tab="prompts">Prompts</button>
     <button data-tab="push">Push</button>
     <button data-tab="inbox">Inbox</button>
@@ -161,6 +187,10 @@ const SUPABASE_ANON_KEY = "sb_publishable_54Y1iL6XfdJ8tFE_2kjB5A_3DqOqIe0";
 const REDIRECT_TO = window.location.origin + window.location.pathname;
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+//  `PromptProvider.lead` in the app. Every prompt is drawn as "<lead> <prompt>",
+//  so the preview below has to use the same words or it is not a preview.
+const PROMPT_LEAD = "Tayka pic of";
 const main = document.getElementById("main");
 const nav  = document.getElementById("nav");
 const who  = document.getElementById("who");
@@ -210,6 +240,92 @@ function renderNotAdmin() {
     <p>Signed in, but this account is not an operator.</p>
     <p class="muted">Nothing here is available to it. That is the server's
     answer, not this page's.</p></div>`;
+}
+
+// ---------------------------------------------------------------------------
+//  Home
+// ---------------------------------------------------------------------------
+//  The front door. It used to open on Reports, which is empty most days and so
+//  said nothing about whether anything was working.
+//
+//  Everything here is counts. `admin_dashboard` deliberately returns no
+//  per-user data: "38 of 41 posted today" is an operator's view of the
+//  product, and the same fact as a list of names is a surveillance tool.
+
+let homeTimer = null;
+
+function stat(n, label, opts = {}) {
+  return `<div class="stat ${opts.alert && n > 0 ? "alert" : ""}">
+    <div class="n">${esc(n)}${opts.of !== undefined ? ` <small>of ${esc(opts.of)}</small>` : ""}</div>
+    <div class="k">${esc(label)}</div>
+  </div>`;
+}
+
+async function renderHome() {
+  if (!main.querySelector(".stats")) {
+    main.innerHTML = `<div class="muted">Loading…</div>`;
+  }
+
+  let d;
+  try { d = (await rpc("admin_dashboard"))[0]; }
+  catch (e) { main.innerHTML = `<p class="note">${esc(e.message)}</p>`; return; }
+
+  main.innerHTML = `
+    <h2>Today · day ${esc(d.today_index)}</h2>
+    <div class="preview">
+      <div class="lead">${esc(PROMPT_LEAD)}</div>
+      <div class="line">${esc(d.today_prompt ?? "—")}</div>
+    </div>
+
+    <div class="stats">
+      ${stat(d.posted_today, "posted today", { of: d.total_users })}
+      ${stat(d.posted_yesterday, "posted yesterday", { of: d.total_users })}
+      ${stat(d.new_users_today, "new today")}
+      ${stat(d.retayks_today, "retayks today")}
+      ${stat(d.comments_today, "comments today")}
+      ${stat(d.premium_accounts, "premium")}
+      ${stat(d.push_devices, "push devices")}
+      ${stat(d.suspended_accounts, "suspended", { alert: true })}
+    </div>
+
+    <h2>Queues</h2>
+    <div class="widgets">
+      <button class="widget" data-go="reports">
+        <h3>Reports ${d.open_reports ? `· ${d.open_reports}` : ""}</h3>
+        <div class="sub">${d.open_reports ? "waiting on you" : "nothing to review"}</div>
+      </button>
+      <button class="widget" data-go="inbox">
+        <h3>Inbox ${d.feedback_waiting + d.suggestions_waiting || ""}</h3>
+        <div class="sub">${esc(d.feedback_waiting)} bug/idea · ${esc(d.suggestions_waiting)} prompt</div>
+      </button>
+      <button class="widget" data-go="push">
+        <h3>Push ${d.pending_pushes ? `· ${d.pending_pushes}` : ""}</h3>
+        <div class="sub">${d.pending_pushes ? "scheduled and waiting" : "nothing scheduled"}</div>
+      </button>
+      <button class="widget" data-go="prompts">
+        <h3>Prompts</h3>
+        <div class="sub">calendar and overrides</div>
+      </button>
+      <button class="widget" data-go="premium">
+        <h3>Premium</h3>
+        <div class="sub">search an account, switch it</div>
+      </button>
+    </div>
+
+    <p class="muted">Counts refresh every 30 seconds.</p>`;
+
+  main.querySelectorAll("[data-go]").forEach(b => b.onclick = () => go(b.dataset.go));
+
+  //  Only while this screen is up. A timer left running behind another tab
+  //  would keep overwriting whatever the operator had opened.
+  clearInterval(homeTimer);
+  homeTimer = setInterval(() => {
+    if (nav.querySelector('[data-tab="home"]').getAttribute("aria-current") === "true") {
+      renderHome();
+    } else {
+      clearInterval(homeTimer);
+    }
+  }, 30000);
 }
 
 // ---------------------------------------------------------------------------
@@ -357,10 +473,6 @@ let todayIndex = null;
 let windowFrom = null;
 const WINDOW = 28;
 
-//  Set when a suggestion is sent over from the Inbox. It pre-fills the next
-//  day the operator opens and is then forgotten, so it cannot leak into an
-//  unrelated edit later.
-let pendingPrompt = null;
 
 function lastDropUTC() {
   const now = new Date();
@@ -444,9 +556,7 @@ function openEditor(row) {
         <span class="muted">day ${row.day_index}</span>
       </div>
       <p class="muted">Rotation says: ${esc(row.computed)}</p>
-      <p><input id="text" value="${esc(pendingPrompt ?? row.effective)}" maxlength="200"></p>
-      ${pendingPrompt ? `<p class="muted">Filled from a suggestion. It is not
-        saved until you press Save override.</p>` : ""}
+      <p><input id="text" value="${esc(row.effective)}" maxlength="200"></p>
       ${row.is_today ? `<p class="muted">Phones that have already shown today's
         prompt keep it until their next launch. Editing today is for fixing a
         mistake, not for changing the day under people.</p>` : ""}
@@ -460,7 +570,6 @@ function openEditor(row) {
     </div>`;
   box.scrollIntoView({ behavior: "smooth", block: "nearest" });
 
-  pendingPrompt = null;   // consumed by the field above; one edit only
   document.getElementById("cancel").onclick = () => { box.innerHTML = ""; };
   document.getElementById("save").onclick = async () => {
     const text = document.getElementById("text").value.trim();
@@ -681,32 +790,116 @@ async function loadSuggestions() {
     catch (e) { alert(e.message); }
   });
 
-  //  The one thing this screen can do that the app's cannot: carry a
-  //  suggestion straight to the calendar, which is where it becomes a prompt.
-  //  It does not schedule anything by itself - somebody still has to pick a
-  //  day - because a prompt landing on a date is a decision, not a paste.
-  box.querySelectorAll("[data-use]").forEach(b => b.onclick = () => {
-    pendingPrompt = b.dataset.use;
-    nav.querySelectorAll("button").forEach(x =>
-      x.setAttribute("aria-current", String(x.dataset.tab === "prompts")));
-    renderPrompts();
-  });
+  box.querySelectorAll("[data-use]").forEach(b => b.onclick = () => useAsPrompt(b.dataset.use));
+}
+
+//  What people write in the box and what a prompt actually is are different
+//  shapes. Some submissions arrive as "Tayka pic of your desk", some as "pic
+//  of your desk", some as just "your desk" - and the app draws every prompt as
+//  "<lead> <prompt>", so pasting the first two verbatim produces "Tayka pic of
+//  Tayka pic of your desk" on everybody's phone.
+//
+//  So the lead-in is stripped, the operator is TOLD it was stripped, and the
+//  preview shows the finished sentence exactly as a user reads it.
+function stripLeadIn(text) {
+  const patterns = [
+    /^\s*tayka\s+pic\s+of\s+/i,
+    /^\s*tayk\s+a\s+pic\s+of\s+/i,
+    /^\s*take\s+a\s+pic(ture)?\s+of\s+/i,
+    /^\s*a\s+pic(ture)?\s+of\s+/i,
+    /^\s*pic(ture)?\s+of\s+/i,
+    /^\s*photo\s+of\s+/i,
+  ];
+  for (const re of patterns) {
+    if (re.test(text)) return { text: text.replace(re, "").trim(), stripped: true };
+  }
+  return { text: text.trim(), stripped: false };
+}
+
+//  Nothing is written until Save. The day is chosen explicitly and defaults to
+//  three days out, never to today: a prompt set for a day already underway is
+//  pinned on every phone that has shown it, and a reminder queued earlier
+//  carries the old text.
+async function useAsPrompt(raw) {
+  const box = document.getElementById("sg");
+  const cleaned = stripLeadIn(raw);
+
+  let days = [];
+  try { days = await rpc("prompt_calendar", { p_from: todayIndex ?? await rpc("tayka_today"), p_days: 21 }); }
+  catch (e) { alert(e.message); return; }
+  if (todayIndex === null) { try { todayIndex = await rpc("tayka_today"); } catch {} }
+
+  const card = document.createElement("div");
+  card.className = "card";
+  card.innerHTML = `
+    <h3 style="margin:0 0 6px; font-size:15px">Use as a prompt</h3>
+    <p class="muted">Submitted as: “${esc(raw)}”</p>
+    ${cleaned.stripped ? `<p class="muted">The lead-in was removed, because the
+      app adds it. Edit below if that was wrong.</p>` : ""}
+    <p><input id="upText" maxlength="200" value="${esc(cleaned.text)}"></p>
+    <div class="preview">
+      <div class="lead">People will read</div>
+      <div class="line" id="upPreview"></div>
+    </div>
+    <p>
+      <select id="upDay">
+        ${days.filter(d => d.day_index > (todayIndex ?? 0)).map((d, i) => `
+          <option value="${d.day_index}" ${i === 2 ? "selected" : ""}>
+            day ${d.day_index} — currently ${esc(d.effective)}${d.override ? " (already edited)" : ""}
+          </option>`).join("")}
+      </select>
+    </p>
+    <div class="row">
+      <button class="action" id="upSave">Set for that day</button>
+      <button class="quiet" id="upCancel" style="margin-left:auto">Cancel</button>
+    </div>
+    <p class="muted" id="upStatus"></p>`;
+  box.prepend(card);
+  card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+
+  const field = card.querySelector("#upText");
+  const paint = () => {
+    card.querySelector("#upPreview").textContent =
+      PROMPT_LEAD + " " + (field.value.trim() || "…");
+  };
+  field.addEventListener("input", paint);
+  paint();
+
+  card.querySelector("#upCancel").onclick = () => card.remove();
+  card.querySelector("#upSave").onclick = async () => {
+    const text = field.value.trim();
+    const day = Number(card.querySelector("#upDay").value);
+    if (!text) return;
+    const current = days.find(d => d.day_index === day);
+    if (current?.override &&
+        !confirm(`Day ${day} already has an override. Replace it?`)) return;
+    try {
+      await rpc("set_prompt_override", { p_day: day, p_prompt: text });
+      card.querySelector("#upStatus").textContent =
+        `Set for day ${day}. It is not cleared from this list automatically.`;
+      card.querySelector("#upSave").disabled = true;
+    } catch (e) { card.querySelector("#upStatus").textContent = e.message; }
+  };
 }
 
 // ---------------------------------------------------------------------------
 //  Shell
 // ---------------------------------------------------------------------------
 
-const TABS = { reports: renderReports, prompts: renderPrompts,
+const TABS = { home: renderHome, reports: renderReports, prompts: renderPrompts,
                push: renderPush, inbox: renderInbox, premium: renderPremium };
+
+function go(tab) {
+  nav.querySelectorAll("button").forEach(b =>
+    b.setAttribute("aria-current", String(b.dataset.tab === tab)));
+  TABS[tab]();
+}
 
 nav.addEventListener("click", async (e) => {
   const tab = e.target.dataset?.tab;
   if (!tab) return;
   if (tab === "signout") { await sb.auth.signOut(); renderSignIn(); return; }
-  nav.querySelectorAll("button").forEach(b =>
-    b.setAttribute("aria-current", String(b.dataset.tab === tab)));
-  TABS[tab]();
+  go(tab);
 });
 
 async function boot() {
@@ -721,7 +914,7 @@ async function boot() {
 
   nav.hidden = false;
   who.textContent = session.user.email ?? "";
-  renderReports();
+  go("home");
 }
 
 sb.auth.onAuthStateChange((event) => {
