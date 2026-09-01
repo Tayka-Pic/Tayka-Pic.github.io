@@ -137,6 +137,7 @@
   <nav id="nav" hidden>
     <button data-tab="reports" aria-current="true">Reports</button>
     <button data-tab="prompts">Prompts</button>
+    <button data-tab="push">Push</button>
     <button data-tab="premium">Premium</button>
     <button data-tab="signout">Sign out</button>
   </nav>
@@ -470,10 +471,123 @@ function openEditor(row) {
 }
 
 // ---------------------------------------------------------------------------
+//  Push
+// ---------------------------------------------------------------------------
+//  The only thing in Tayka that reaches every phone in the world without
+//  somebody pressing anything at the moment it lands. Sending now and
+//  scheduling are the same form with two buttons, because they are the same
+//  decision with a different time on it.
+//
+//  A broadcast writes no notifications rows on purpose - it is an
+//  announcement, not a per-user event - so it neither appears in anybody's
+//  in-app list nor inflates their unread badge.
+
+//  The <input type="datetime-local"> value is LOCAL wall-clock with no zone,
+//  so it is turned into an instant here rather than handed to Postgres as a
+//  string. new Date(local) uses the browser's own offset, which is what the
+//  operator meant when they typed it.
+function localToISO(v) {
+  const d = new Date(v);
+  return isNaN(d) ? null : d.toISOString();
+}
+
+function whenText(iso) {
+  const d = new Date(iso);
+  return d.toLocaleString(undefined,
+    { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+async function renderPush() {
+  main.innerHTML = `
+    <h2>Push</h2>
+    <div class="card">
+      <p><input id="ptitle" placeholder="Title" maxlength="120"></p>
+      <p><textarea id="pbody" rows="3" placeholder="Body" maxlength="500"></textarea></p>
+      <div class="row">
+        <input id="pwhen" type="datetime-local" style="flex:1">
+        <button class="quiet" id="schedule">Schedule</button>
+        <button class="action" id="now">Send now</button>
+      </div>
+      <p class="muted" id="pstatus">Every device with notifications on gets this
+      banner. It is not added to anyone's notifications list.</p>
+    </div>
+    <h2>Queue</h2>
+    <div id="queue" class="muted">Loading…</div>`;
+
+  const status = document.getElementById("pstatus");
+  const title = () => document.getElementById("ptitle").value.trim();
+  const body  = () => document.getElementById("pbody").value.trim();
+
+  const say = (msg, bad) => {
+    status.textContent = msg;
+    status.className = bad ? "note" : "muted";
+  };
+
+  //  Sending now is irreversible and reaches everybody, so it asks. Scheduling
+  //  does not, because a scheduled push can still be cancelled.
+  document.getElementById("now").onclick = async () => {
+    if (!title()) { say("A title is required.", true); return; }
+    if (!confirm("Send this to every device, right now?")) return;
+    try {
+      const msg = await rpc("broadcast_push", { p_title: title(), p_body: body() });
+      say(msg, false);
+    } catch (e) { say(e.message, true); }
+  };
+
+  document.getElementById("schedule").onclick = async () => {
+    if (!title()) { say("A title is required.", true); return; }
+    const when = localToISO(document.getElementById("pwhen").value);
+    if (!when) { say("Pick a date and time first.", true); return; }
+    try {
+      await rpc("schedule_push", { p_title: title(), p_body: body(), p_send_at: when });
+      document.getElementById("ptitle").value = "";
+      document.getElementById("pbody").value = "";
+      say("Scheduled. It can be cancelled until it goes out.", false);
+      loadQueue();
+    } catch (e) { say(e.message, true); }
+  };
+
+  loadQueue();
+}
+
+async function loadQueue() {
+  const box = document.getElementById("queue");
+  if (!box) return;
+  let rows;
+  try { rows = await rpc("list_scheduled_pushes"); }
+  catch (e) { box.innerHTML = `<p class="note">${esc(e.message)}</p>`; return; }
+
+  if (!rows.length) { box.innerHTML = `<p class="empty">Nothing scheduled.</p>`; return; }
+
+  box.innerHTML = `<div class="card"><table>` + rows.map(r => `
+    <tr>
+      <td>
+        <div class="row">
+          <strong>${esc(r.title)}</strong>
+          ${r.sent_at
+            ? `<span class="tag ${String(r.outcome).startsWith("sent") ? "" : "red"}">${esc(r.outcome ?? "done")}</span>`
+            : `<span class="tag grey">PENDING</span>`}
+        </div>
+        <div class="muted">${esc(r.body)}</div>
+        <div class="muted">${esc(whenText(r.send_at))}${r.created_by ? " · @" + esc(r.created_by) : ""}</div>
+      </td>
+      <td style="text-align:right; white-space:nowrap">
+        ${r.sent_at ? "" : `<button class="danger" data-cancel="${esc(r.id)}">Cancel</button>`}
+      </td>
+    </tr>`).join("") + `</table></div>`;
+
+  box.querySelectorAll("[data-cancel]").forEach(b => b.onclick = async () => {
+    try { await rpc("cancel_scheduled_push", { p_id: b.dataset.cancel }); loadQueue(); }
+    catch (e) { alert(e.message); }
+  });
+}
+
+// ---------------------------------------------------------------------------
 //  Shell
 // ---------------------------------------------------------------------------
 
-const TABS = { reports: renderReports, prompts: renderPrompts, premium: renderPremium };
+const TABS = { reports: renderReports, prompts: renderPrompts,
+               push: renderPush, premium: renderPremium };
 
 nav.addEventListener("click", async (e) => {
   const tab = e.target.dataset?.tab;
