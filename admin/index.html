@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<!--
+  Tayka operator console.  https://tayka.app/admin/
+
+  WHY THIS IS A PATH AND NOT admin.tayka.app
+  ------------------------------------------
+  GitHub Pages allows ONE custom domain per repository, and this repo's CNAME
+  binds tayka.app. A subdomain therefore needs its own repo with its own CNAME
+  plus a DNS record, which is more moving parts than the panel is worth on day
+  one.
+
+  MIGRATING TO admin.tayka.app LATER
+  ----------------------------------
+  Nothing here assumes the path, so the move is mechanical:
+
+    1. New public repo, e.g. Tayka-Pic/tayka-admin, containing this directory's
+       contents at its root, with a CNAME file holding: admin.tayka.app
+    2. In Cloudflare, a CNAME record  admin -> tayka-pic.github.io,
+       DNS ONLY (grey cloud). Behind the proxy GitHub sees Cloudflare rather
+       than the domain and the certificate never issues - and .app is on the
+       HSTS preload list, so the site would not degrade to HTTP, it would fail
+       to open at all. Same trap CLAUDE.md records for the apex.
+    3. Add https://admin.tayka.app/ to Supabase -> Authentication -> URL
+       Configuration -> Redirect URLs.
+    4. Leave a redirect stub here. A URL somebody has bookmarked should not
+       simply stop working, which is the same reasoning that turned
+       docs/privacy.html into a stub rather than deleting it.
+
+  Note what does NOT change: the Apple Services ID. Its registered domain is
+  the SUPABASE project's domain, not Tayka's, because the OAuth return URL is
+  Supabase's /auth/v1/callback. Apple never redirects to this page directly -
+  Supabase does, after it has handled the callback - so where this page lives
+  is invisible to Apple.
+
+  The only path-shaped thing in this file is REDIRECT_TO below, and it is
+  computed from window.location rather than written down.
+
+  WHAT PROTECTS THIS PAGE
+  -----------------------
+  Not obscurity, and not the login. Every call below is an RPC whose first line
+  is `if not public.is_admin() then raise`. A signed-in non-admin gets an empty
+  console and a wall of 42501s; a signed-out visitor gets nothing at all. The
+  publishable key in this file is the same one compiled into the app and is
+  meant to be public. Do not ever put the service_role key here.
+-->
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Tayka Admin</title>
+<style>
+  /* Theme.Share, the app's one fixed palette. This screen is operator
+     furniture and never follows the accent. */
+  :root {
+    --ground:    #08090f;
+    --panel:     #131725;
+    --hairline:  #232b42;
+    --text:      #ffffff;
+    --secondary: #9da8c1;
+    --accent:    #5b8def;
+    --danger:    #ff6b6b;
+    --good:      #4ec9a0;
+  }
+  * { box-sizing: border-box; }
+  /*  A `display` rule beats the user-agent stylesheet's `[hidden]{display:none}`,
+      so `nav { display: flex }` quietly made `nav.hidden = true` do nothing and
+      the signed-out screen offered Reports, Premium and Sign out. Caught by
+      looking at the page, which is the only way this kind of thing is caught. */
+  [hidden] { display: none !important; }
+  body {
+    margin: 0; background: var(--ground); color: var(--text);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  header {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 18px 20px; border-bottom: 1px solid var(--hairline);
+    position: sticky; top: 0; background: var(--ground); z-index: 10;
+  }
+  .wordmark { font-weight: 900; letter-spacing: 0.23em; font-size: 15px; }
+  nav { display: flex; gap: 4px; flex-wrap: wrap; margin-left: auto; }
+  nav button {
+    background: none; border: 0; color: var(--secondary); cursor: pointer;
+    font: inherit; padding: 6px 10px; border-radius: 8px;
+  }
+  nav button[aria-current="true"] { background: var(--panel); color: var(--text); }
+  main { max-width: 860px; margin: 0 auto; padding: 24px 20px 80px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--hairline);
+    border-radius: 14px; padding: 16px; margin-bottom: 14px;
+  }
+  h2 { font-size: 15px; margin: 26px 0 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--secondary); }
+  button.action {
+    background: var(--accent); color: #fff; border: 0; border-radius: 999px;
+    padding: 9px 16px; font: inherit; font-weight: 600; cursor: pointer;
+  }
+  button.quiet { background: none; color: var(--accent); border: 0; font: inherit; font-weight: 600; cursor: pointer; padding: 6px 0; }
+  button.danger { background: none; color: var(--danger); border: 0; font: inherit; font-weight: 600; cursor: pointer; padding: 6px 0; }
+  button:disabled { opacity: .45; cursor: default; }
+  input, textarea {
+    background: var(--ground); color: var(--text); border: 1px solid var(--hairline);
+    border-radius: 10px; padding: 10px 12px; font: inherit; width: 100%;
+  }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .tag {
+    font-size: 11px; font-weight: 700; letter-spacing: .08em;
+    padding: 3px 8px; border-radius: 999px; background: var(--accent); color: #fff;
+  }
+  .tag.grey { background: var(--secondary); }
+  .tag.red  { background: var(--danger); }
+  .muted { color: var(--secondary); font-size: 13px; }
+  .shot { max-width: 100%; border-radius: 10px; margin: 10px 0; display: block; }
+  .empty { color: var(--secondary); padding: 8px 0; }
+  .note { color: var(--danger); }
+  .center { text-align: center; padding: 60px 20px; }
+  table { width: 100%; border-collapse: collapse; }
+  td { padding: 8px 0; border-bottom: 1px solid var(--hairline); vertical-align: top; }
+</style>
+</head>
+<body>
+
+<header>
+  <span class="wordmark">TAYKA</span>
+  <span class="muted" id="who"></span>
+  <nav id="nav" hidden>
+    <button data-tab="reports" aria-current="true">Reports</button>
+    <button data-tab="premium">Premium</button>
+    <button data-tab="signout">Sign out</button>
+  </nav>
+</header>
+
+<main id="main">
+  <div class="center muted">Loading…</div>
+</main>
+
+<script type="module">
+import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
+
+//  The same values the app compiles in and the suggestions form already
+//  inlines. Publishable by design; RLS is what enforces anything.
+const SUPABASE_URL = "https://tvxzrvrevpxjwvzfuhom.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_54Y1iL6XfdJ8tFE_2kjB5A_3DqOqIe0";
+
+//  Computed, not written down, so moving this to admin.tayka.app changes
+//  nothing in here.
+const REDIRECT_TO = window.location.origin + window.location.pathname;
+
+const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const main = document.getElementById("main");
+const nav  = document.getElementById("nav");
+const who  = document.getElementById("who");
+
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g, c => (
+  { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+const day = (iso) => iso ? new Date(iso).toLocaleDateString(undefined,
+  { month: "short", day: "numeric" }) : "";
+
+async function rpc(name, args) {
+  const { data, error } = await sb.rpc(name, args ?? {});
+  if (error) throw error;
+  return data;
+}
+
+// ---------------------------------------------------------------------------
+//  Sign in
+// ---------------------------------------------------------------------------
+//  Sign in with Apple, because it is the app's only identity. Apple's `sub` is
+//  stable per Apple ID per developer team, so signing in here lands on the
+//  SAME auth.users row as the phone - which is what makes is_admin() work
+//  without any linking step.
+
+function renderSignIn(message) {
+  nav.hidden = true;
+  who.textContent = "";
+  main.innerHTML = `
+    <div class="center">
+      <p class="muted">Operator console.</p>
+      ${message ? `<p class="note">${esc(message)}</p>` : ""}
+      <p><button class="action" id="in">Sign in with Apple</button></p>
+      <p class="muted">Use the same Apple ID as your Tayka account.</p>
+    </div>`;
+  document.getElementById("in").onclick = async () => {
+    const { error } = await sb.auth.signInWithOAuth({
+      provider: "apple",
+      options: { redirectTo: REDIRECT_TO },
+    });
+    if (error) renderSignIn(error.message);
+  };
+}
+
+function renderNotAdmin() {
+  nav.hidden = false;
+  main.innerHTML = `<div class="center">
+    <p>Signed in, but this account is not an operator.</p>
+    <p class="muted">Nothing here is available to it. That is the server's
+    answer, not this page's.</p></div>`;
+}
+
+// ---------------------------------------------------------------------------
+//  Reports
+// ---------------------------------------------------------------------------
+//  The photo is the point. Until supabase/83 an operator could not read the
+//  bytes of a reported Tayk at all, so this queue was a reason and two
+//  usernames about a picture nobody reviewing it could see.
+
+async function renderReports() {
+  main.innerHTML = `<h2>Reports</h2><div class="muted">Loading…</div>`;
+  let rows;
+  try { rows = await rpc("list_reports"); }
+  catch (e) { main.innerHTML = `<p class="note">${esc(e.message)}</p>`; return; }
+
+  if (!rows.length) { main.innerHTML = `<h2>Reports</h2><p class="empty">Nothing to review.</p>`; return; }
+
+  //  One signing request for the whole page, the same reasoning
+  //  PhotoDownloader gives: a page of photos should not be a round trip each.
+  const paths = rows.map(r => r.image_path).filter(Boolean);
+  const signed = {};
+  if (paths.length) {
+    const { data } = await sb.storage.from("post-photos").createSignedUrls(paths, 3600);
+    (data ?? []).forEach(d => { if (d.signedUrl) signed[d.path] = d.signedUrl; });
+  }
+
+  main.innerHTML = `<h2>Reports (${rows.length})</h2>` + rows.map(r => `
+    <div class="card" data-id="${esc(r.id)}">
+      <div class="row">
+        <span class="tag">${esc(r.target_kind)}</span>
+        ${r.suspended ? '<span class="tag red">SUSPENDED</span>'
+          : (r.pressure >= 2 ? '<span class="tag red">URGENT</span>' : "")}
+        <span class="muted" style="margin-left:auto">${esc(day(r.created_at))}</span>
+      </div>
+      ${r.image_path && signed[r.image_path]
+        ? `<img class="shot" src="${esc(signed[r.image_path])}" alt="reported photo">`
+        : (r.image_path ? `<p class="muted">Photo unavailable.</p>` : "")}
+      ${r.detail ? `<p>${esc(r.detail)}</p>` : ""}
+      <p class="muted">${esc(r.reason)}
+        ${r.reported ? " · @" + esc(r.reported) : ""}
+        ${r.reporter ? " · reported by @" + esc(r.reporter) : ""}
+        ${r.pressure > 1 ? " · " + r.pressure + " different reporters this week" : ""}</p>
+      <div class="row">
+        <button class="danger" data-act="remove">Remove</button>
+        <button class="quiet"  data-act="dismiss">Dismiss</button>
+        ${r.reported ? `<button class="quiet" data-act="suspend"
+           data-user="${esc(r.reported)}" data-on="${r.suspended ? 0 : 24}"
+           style="margin-left:auto">${r.suspended ? "Unsuspend" : "Suspend 24h"}</button>` : ""}
+      </div>
+    </div>`).join("");
+
+  main.querySelectorAll("[data-act]").forEach(b => b.onclick = async () => {
+    const card = b.closest(".card");
+    const act  = b.dataset.act;
+    try {
+      if (act === "suspend") {
+        await rpc("set_suspension", { name: b.dataset.user, hours: Number(b.dataset.on) });
+      } else {
+        //  Removing deletes content for everyone, so it asks first. Dismissing
+        //  changes nothing about the content and does not.
+        if (act === "remove" && !confirm("Remove this content for everyone?")) return;
+        await rpc("resolve_report", { report: card.dataset.id, action: act });
+      }
+      renderReports();
+    } catch (e) { alert(e.message); }
+  });
+}
+
+// ---------------------------------------------------------------------------
+//  Premium
+// ---------------------------------------------------------------------------
+
+async function renderPremium() {
+  main.innerHTML = `
+    <h2>Premium</h2>
+    <div class="card">
+      <div class="row">
+        <input id="q" placeholder="username" autocapitalize="off" autocorrect="off" style="flex:1">
+        <button class="action" id="go">Search</button>
+      </div>
+      <p class="muted">Wildcards are escaped on the server, so a stray % finds
+      nothing rather than everybody.</p>
+    </div>
+    <div id="results"></div>`;
+
+  const results = document.getElementById("results");
+  const search = async () => {
+    const q = document.getElementById("q").value.trim();
+    if (!q) return;
+    results.innerHTML = `<p class="muted">Searching…</p>`;
+    let rows;
+    try { rows = await rpc("admin_find_users", { p_query: q }); }
+    catch (e) { results.innerHTML = `<p class="note">${esc(e.message)}</p>`; return; }
+
+    if (!rows.length) { results.innerHTML = `<p class="empty">No account starts with that.</p>`; return; }
+
+    results.innerHTML = `<div class="card"><table>` + rows.map(r => `
+      <tr>
+        <td>
+          <div class="row">
+            <strong>@${esc(r.username)}</strong>
+            <span class="tag ${r.premium ? "" : "grey"}">${r.premium ? "PREMIUM" : "STANDARD"}</span>
+            ${r.suspended ? '<span class="tag red">SUSPENDED</span>' : ""}
+          </div>
+          <div class="muted">${esc(r.source ? sourceLabel(r.source) : "joined " + day(r.joined))}</div>
+        </td>
+        <td style="text-align:right; white-space:nowrap">
+          ${r.premium && r.source === "purchase"
+            ? `<span class="muted">cannot be revoked</span>`
+            : `<button class="${r.premium ? "danger" : "quiet"}" data-user="${esc(r.username)}"
+                 data-on="${r.premium ? 0 : 1}">${r.premium ? "Make standard" : "Make premium"}</button>`}
+        </td>
+      </tr>`).join("") + `</table></div>`;
+
+    results.querySelectorAll("[data-user]").forEach(b => b.onclick = async () => {
+      try {
+        await rpc("set_premium", { p_username: b.dataset.user, p_on: b.dataset.on === "1" });
+        search();
+      } catch (e) { alert(e.message); }
+    });
+  };
+
+  document.getElementById("go").onclick = search;
+  document.getElementById("q").addEventListener("keydown", e => { if (e.key === "Enter") search(); });
+}
+
+function sourceLabel(s) {
+  return { purchase: "purchased", grant: "granted by an admin",
+           grandfathered: "had it before the paywall" }[s] ?? s;
+}
+
+// ---------------------------------------------------------------------------
+//  Shell
+// ---------------------------------------------------------------------------
+
+const TABS = { reports: renderReports, premium: renderPremium };
+
+nav.addEventListener("click", async (e) => {
+  const tab = e.target.dataset?.tab;
+  if (!tab) return;
+  if (tab === "signout") { await sb.auth.signOut(); renderSignIn(); return; }
+  nav.querySelectorAll("button").forEach(b =>
+    b.setAttribute("aria-current", String(b.dataset.tab === tab)));
+  TABS[tab]();
+});
+
+async function boot() {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) { renderSignIn(); return; }
+
+  let admin = false;
+  try { admin = await rpc("is_admin"); }
+  catch { /* not signed in far enough to ask; treated as not an admin */ }
+
+  if (!admin) { renderNotAdmin(); return; }
+
+  nav.hidden = false;
+  who.textContent = session.user.email ?? "";
+  renderReports();
+}
+
+sb.auth.onAuthStateChange((event) => {
+  if (event === "SIGNED_IN" || event === "SIGNED_OUT") boot();
+});
+
+boot();
+</script>
+</body>
+</html>
