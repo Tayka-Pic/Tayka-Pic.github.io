@@ -126,6 +126,13 @@
   .cell .when  { font-size: 11px; letter-spacing: .06em; color: var(--secondary); text-transform: uppercase; }
   .cell .what  { margin-top: 4px; }
   .cell .edited { font-size: 11px; color: var(--accent); font-weight: 700; }
+  .cell .rate  { font-size: 11px; color: var(--secondary); margin-top: 4px; }
+  .cell .rate b { color: var(--text); }
+  .bars { display: grid; gap: 2px; margin-top: 6px; }
+  .bar  { display: grid; grid-template-columns: 10px 1fr 22px; gap: 6px; align-items: center;
+          font-size: 10px; color: var(--secondary); }
+  .bar span.fill { display: block; height: 5px; border-radius: 999px; background: var(--accent); }
+  .bar span.none { display: block; height: 5px; border-radius: 999px; background: var(--hairline); }
 
   .stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
   .stat {
@@ -266,15 +273,26 @@ async function renderHome() {
     main.innerHTML = `<div class="muted">Loading…</div>`;
   }
 
-  let d;
-  try { d = (await rpc("admin_dashboard"))[0]; }
-  catch (e) { main.innerHTML = `<p class="note">${esc(e.message)}</p>`; return; }
+  let d, todayRating = null;
+  try {
+    //  Two calls, and the second genuinely has to wait: it needs today's day
+    //  index, which the first returns. `admin_dashboard` predates ratings and
+    //  widening it would mean editing a migration that is already applied.
+    d = (await rpc("admin_dashboard"))[0];
+    const rated = await rpc("prompt_rating_summary", { p_from: d.today_index, p_days: 1 });
+    todayRating = rated?.[0] ?? null;
+  } catch (e) { main.innerHTML = `<p class="note">${esc(e.message)}</p>`; return; }
 
   main.innerHTML = `
     <h2>Today · day ${esc(d.today_index)}</h2>
     <div class="preview">
       <div class="lead">${esc(PROMPT_LEAD)}</div>
       <div class="line">${esc(d.today_prompt ?? "—")}</div>
+      <div class="lead" style="margin-top:6px">
+        ${todayRating && todayRating.votes > 0
+          ? `Rated <b style="color:var(--text)">${esc(todayRating.average)}</b> by ${esc(todayRating.votes)} ${todayRating.votes === 1 ? "person" : "people"}`
+          : "No ratings yet today"}
+      </div>
     </div>
 
     <div class="stats">
@@ -505,9 +523,18 @@ async function renderPrompts() {
   if (windowFrom === null) windowFrom = todayIndex - 7;
 
   main.innerHTML = `<h2>Prompts</h2><div class="muted">Loading…</div>`;
-  let rows;
-  try { rows = await rpc("prompt_calendar", { p_from: windowFrom, p_days: WINDOW }); }
-  catch (e) { main.innerHTML = `<p class="note">${esc(e.message)}</p>`; return; }
+  let rows, rated = {};
+  try {
+    //  The calendar and how each day landed, together. A rating is a fact
+    //  about a prompt, so it belongs on the prompt rather than behind its own
+    //  tab.
+    const [cal, ratings] = await Promise.all([
+      rpc("prompt_calendar", { p_from: windowFrom, p_days: WINDOW }),
+      rpc("prompt_rating_summary", { p_from: windowFrom, p_days: WINDOW }),
+    ]);
+    rows = cal;
+    for (const r of ratings) rated[r.day_index] = r;
+  } catch (e) { main.innerHTML = `<p class="note">${esc(e.message)}</p>`; return; }
 
   const first = rows[0], last = rows[rows.length - 1];
   main.innerHTML = `
@@ -528,6 +555,9 @@ async function renderPrompts() {
         <div class="when">${esc(whenLabel(r.day_index))} · day ${r.day_index}</div>
         <div class="what">${esc(r.effective)}</div>
         ${r.override ? '<div class="edited">EDITED</div>' : ""}
+        ${rated[r.day_index]?.votes
+          ? `<div class="rate">★ <b>${esc(rated[r.day_index].average)}</b> · ${esc(rated[r.day_index].votes)} rating${rated[r.day_index].votes === 1 ? "" : "s"}</div>`
+          : (r.day_index <= todayIndex ? '<div class="rate">no ratings</div>' : "")}
       </button>`).join("")}</div>
     <div id="editor"></div>`;
 
@@ -537,7 +567,7 @@ async function renderPrompts() {
 
   main.querySelectorAll(".cell").forEach(b => b.onclick = () => {
     const row = rows.find(r => String(r.day_index) === b.dataset.day);
-    openEditor(row);
+    openEditor(row, rated[row.day_index]);
   });
 }
 
@@ -546,7 +576,22 @@ async function renderPrompts() {
 //  moves only the header the app draws over it. What it must not do is change
 //  a day somebody is mid-answer on, which is why the app pins the first
 //  settled prompt it shows for a day and picks up an edit on the next launch.
-function openEditor(row) {
+//  The spread, not just the average. 3.0 from everybody shrugging and 3.0
+//  from half loving it and half hating it are the same number and completely
+//  different findings, and only the second is worth writing more prompts like.
+function spreadHTML(r) {
+  if (!r || !r.votes) return "";
+  const counts = [r.r1, r.r2, r.r3, r.r4, r.r5];
+  const peak = Math.max(...counts, 1);
+  return `<div class="bars">${counts.map((c, i) => `
+    <div class="bar">
+      <span>${i + 1}</span>
+      <span class="${c ? "fill" : "none"}" style="width:${c ? Math.max(c / peak * 100, 4) : 100}%"></span>
+      <span>${c}</span>
+    </div>`).join("")}</div>`;
+}
+
+function openEditor(row, rating) {
   const box = document.getElementById("editor");
   const past = row.day_index < todayIndex;
   box.innerHTML = `
@@ -556,6 +601,11 @@ function openEditor(row) {
         <span class="muted">day ${row.day_index}</span>
       </div>
       <p class="muted">Rotation says: ${esc(row.computed)}</p>
+      ${rating && rating.votes
+        ? `<p class="muted">Rated <b style="color:var(--text)">${esc(rating.average)}</b>
+             by ${esc(rating.votes)} ${rating.votes === 1 ? "person" : "people"}</p>
+           ${spreadHTML(rating)}`
+        : (past ? `<p class="muted">Nobody rated this day.</p>` : "")}
       <p><input id="text" value="${esc(row.effective)}" maxlength="200"></p>
       ${row.is_today ? `<p class="muted">Phones that have already shown today's
         prompt keep it until their next launch. Editing today is for fixing a
