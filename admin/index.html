@@ -138,6 +138,7 @@
     <button data-tab="reports" aria-current="true">Reports</button>
     <button data-tab="prompts">Prompts</button>
     <button data-tab="push">Push</button>
+    <button data-tab="inbox">Inbox</button>
     <button data-tab="premium">Premium</button>
     <button data-tab="signout">Sign out</button>
   </nav>
@@ -356,6 +357,11 @@ let todayIndex = null;
 let windowFrom = null;
 const WINDOW = 28;
 
+//  Set when a suggestion is sent over from the Inbox. It pre-fills the next
+//  day the operator opens and is then forgotten, so it cannot leak into an
+//  unrelated edit later.
+let pendingPrompt = null;
+
 function lastDropUTC() {
   const now = new Date();
   const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(),
@@ -438,7 +444,9 @@ function openEditor(row) {
         <span class="muted">day ${row.day_index}</span>
       </div>
       <p class="muted">Rotation says: ${esc(row.computed)}</p>
-      <p><input id="text" value="${esc(row.effective)}" maxlength="200"></p>
+      <p><input id="text" value="${esc(pendingPrompt ?? row.effective)}" maxlength="200"></p>
+      ${pendingPrompt ? `<p class="muted">Filled from a suggestion. It is not
+        saved until you press Save override.</p>` : ""}
       ${row.is_today ? `<p class="muted">Phones that have already shown today's
         prompt keep it until their next launch. Editing today is for fixing a
         mistake, not for changing the day under people.</p>` : ""}
@@ -452,6 +460,7 @@ function openEditor(row) {
     </div>`;
   box.scrollIntoView({ behavior: "smooth", block: "nearest" });
 
+  pendingPrompt = null;   // consumed by the field above; one edit only
   document.getElementById("cancel").onclick = () => { box.innerHTML = ""; };
   document.getElementById("save").onclick = async () => {
     const text = document.getElementById("text").value.trim();
@@ -583,11 +592,113 @@ async function loadQueue() {
 }
 
 // ---------------------------------------------------------------------------
+//  Inbox
+// ---------------------------------------------------------------------------
+//  Two queues on one screen, feedback above suggestions. That is the order the
+//  app's Admin screen uses and the reason is the same: a bug report is
+//  somebody waiting on the operator, and a prompt idea is not.
+//
+//  They are two tables rather than one for the reason 75 gives. A suggestion
+//  becomes a prompt, can arrive from the public web form, and carries an
+//  unverified username and a referral code. Feedback arrives only from inside
+//  the app, always from a real session, and wants the build it came from.
+//  Folding them together means four columns that are null for half the rows.
+//
+//  Deleting is the whole review workflow in both cases - there is no handled
+//  state and no second table. An operator clears a row once they have acted on
+//  it or decided to pass.
+
+async function renderInbox() {
+  main.innerHTML = `<h2>Bugs and ideas</h2><div id="fb" class="muted">Loading…</div>
+                    <h2>Prompt suggestions</h2><div id="sg" class="muted">Loading…</div>`;
+  await Promise.all([loadFeedback(), loadSuggestions()]);
+}
+
+async function loadFeedback() {
+  const box = document.getElementById("fb");
+  if (!box) return;
+  let rows;
+  try { rows = await rpc("list_app_feedback"); }
+  catch (e) { box.innerHTML = `<p class="note">${esc(e.message)}</p>`; return; }
+
+  if (!rows.length) { box.innerHTML = `<p class="empty">Nothing reported.</p>`; return; }
+
+  box.innerHTML = `<div class="card"><table>` + rows.map(r => `
+    <tr>
+      <td>
+        <div class="row">
+          <span class="tag ${r.kind === "bug" ? "red" : ""}">${esc(r.kind)}</span>
+          ${r.username ? `<span class="muted">@${esc(r.username)}</span>` : ""}
+          <span class="muted" style="margin-left:auto">${esc(day(r.created_at))}</span>
+        </div>
+        <div>${esc(r.body)}</div>
+        ${r.app_version ? `<div class="muted">${esc(r.app_version)}</div>` : ""}
+      </td>
+      <td style="text-align:right; white-space:nowrap">
+        <button class="danger" data-fb="${esc(r.id)}">Clear</button>
+      </td>
+    </tr>`).join("") + `</table></div>`;
+
+  box.querySelectorAll("[data-fb]").forEach(b => b.onclick = async () => {
+    try { await rpc("delete_app_feedback", { p_id: b.dataset.fb }); loadFeedback(); }
+    catch (e) { alert(e.message); }
+  });
+}
+
+async function loadSuggestions() {
+  const box = document.getElementById("sg");
+  if (!box) return;
+  let rows;
+  try { rows = await rpc("list_prompt_suggestions"); }
+  catch (e) { box.innerHTML = `<p class="note">${esc(e.message)}</p>`; return; }
+
+  if (!rows.length) { box.innerHTML = `<p class="empty">No suggestions yet.</p>`; return; }
+
+  box.innerHTML = `<div class="card"><table>` + rows.map(r => `
+    <tr>
+      <td>
+        <div>${esc(r.suggestion)}</div>
+        <div class="muted">
+          ${r.submitted_username
+            //  The public form has no session to check a name against, so an
+            //  unverified one is shown as a claim rather than as a name. 53's
+            //  whole point is that the two never render identically.
+            ? (r.verified ? "@" + esc(r.submitted_username)
+                          : "claims @" + esc(r.submitted_username))
+            : ""}
+          ${r.referral_code ? " · <strong>" + esc(r.referral_code) + "</strong>" : ""}
+          · ${esc(day(r.created_at))}
+        </div>
+      </td>
+      <td style="text-align:right; white-space:nowrap">
+        <button class="quiet" data-use="${esc(r.suggestion)}">Use as prompt</button>
+        <button class="danger" data-sg="${esc(r.id)}">Clear</button>
+      </td>
+    </tr>`).join("") + `</table></div>`;
+
+  box.querySelectorAll("[data-sg]").forEach(b => b.onclick = async () => {
+    try { await rpc("delete_prompt_suggestion", { p_id: b.dataset.sg }); loadSuggestions(); }
+    catch (e) { alert(e.message); }
+  });
+
+  //  The one thing this screen can do that the app's cannot: carry a
+  //  suggestion straight to the calendar, which is where it becomes a prompt.
+  //  It does not schedule anything by itself - somebody still has to pick a
+  //  day - because a prompt landing on a date is a decision, not a paste.
+  box.querySelectorAll("[data-use]").forEach(b => b.onclick = () => {
+    pendingPrompt = b.dataset.use;
+    nav.querySelectorAll("button").forEach(x =>
+      x.setAttribute("aria-current", String(x.dataset.tab === "prompts")));
+    renderPrompts();
+  });
+}
+
+// ---------------------------------------------------------------------------
 //  Shell
 // ---------------------------------------------------------------------------
 
 const TABS = { reports: renderReports, prompts: renderPrompts,
-               push: renderPush, premium: renderPremium };
+               push: renderPush, inbox: renderInbox, premium: renderPremium };
 
 nav.addEventListener("click", async (e) => {
   const tab = e.target.dataset?.tab;
