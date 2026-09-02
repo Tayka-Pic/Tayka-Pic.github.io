@@ -296,10 +296,55 @@ const esc = (v) => String(v ?? "").replace(/[&<>"']/g, c => (
 const day = (iso) => iso ? new Date(iso).toLocaleDateString(undefined,
   { month: "short", day: "numeric" }) : "";
 
-async function rpc(name, args) {
-  const { data, error } = await sb.rpc(name, args ?? {});
-  if (error) throw error;
-  return data;
+//  Every call is bounded. supabase-js has NO default timeout, so a stalled
+//  request waits for ever and the screen keeps saying "Loading…" -- which is
+//  a claim that something is still coming, made about a request that has
+//  died. That is the same missing-third-state failure as a photo tile
+//  spinning behind a file that will never arrive.
+//
+//  It is not hypothetical. PostgREST reloads its schema cache whenever a
+//  function is created or dropped, and requests stall while it does; the
+//  Inbox was seen saying "Loading…" for over a minute during a migration.
+//  Nothing was broken and nothing said so. Now it says so.
+const RPC_TIMEOUT_MS = 15000;
+
+async function rpc(name, args, opts = {}) {
+  const ms = opts.timeout ?? RPC_TIMEOUT_MS;
+  let call = sb.rpc(name, args ?? {});
+
+  //  Actually cancel the request where the client supports it, so a timed-out
+  //  call stops occupying a connection rather than merely being ignored.
+  if (typeof call.abortSignal === "function" && typeof AbortSignal?.timeout === "function") {
+    try { call = call.abortSignal(AbortSignal.timeout(ms)); } catch { /* older client */ }
+  }
+
+  //  The race is the backstop, for a client that ignores the signal.
+  let timer;
+  const expiry = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(
+      `${name} did not answer within ${Math.round(ms / 1000)} seconds. ` +
+      `The server may be busy — try again.`)), ms + 500);
+  });
+
+  try {
+    const { data, error } = await Promise.race([call, expiry]);
+    if (error) throw error;
+    return data;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+//  An error with a way out of it. A dead end that says "NetworkError" and
+//  nothing else leaves reloading the whole page as the only move.
+function errorWithRetry(box, message, retry) {
+  box.innerHTML = `<p class="note">${esc(message)}</p>`;
+  if (!retry) return;
+  const b = document.createElement("button");
+  b.className = "quiet";
+  b.textContent = "Try again";
+  b.onclick = retry;
+  box.appendChild(b);
 }
 
 // ---------------------------------------------------------------------------
@@ -641,13 +686,51 @@ async function renderHome(isRefresh = false) {
 //  bytes of a reported Tayk at all, so this queue was a reason and two
 //  usernames about a picture nobody reviewing it could see.
 
-async function renderReports() {
-  main.innerHTML = `<h2>Reports</h2><div class="muted">Loading…</div>`;
-  let rows;
-  try { rows = await rpc("list_reports"); }
-  catch (e) { main.innerHTML = `<p class="note">${esc(e.message)}</p>`; return; }
+//  `list_reports` has taken include_resolved since 65 and nothing ever passed
+//  true, so every handled report vanished. An empty queue then looks exactly
+//  like a broken one -- which is how this was reported: "the reports seem to
+//  be missing." They were not missing, they were done.
+let reportsShowArchive = false;
 
-  if (!rows.length) { main.innerHTML = `<h2>Reports</h2><p class="empty">Nothing to review.</p>`; return; }
+async function renderReports() {
+  const heading = () => `<h2>Reports</h2>
+    <div class="subnav" id="rnav">
+      <button data-arch="0">Open</button>
+      <button data-arch="1">Archive</button>
+    </div>`;
+
+  const wireTabs = () => {
+    main.querySelectorAll("#rnav button").forEach(b => {
+      b.setAttribute("aria-current", String((b.dataset.arch === "1") === reportsShowArchive));
+      b.onclick = () => { reportsShowArchive = b.dataset.arch === "1"; renderReports(); };
+    });
+  };
+
+  main.innerHTML = heading() + `<div class="muted">Loading…</div>`;
+  wireTabs();
+
+  let rows;
+  try { rows = await rpc("list_reports", { include_resolved: reportsShowArchive }); }
+  catch (e) {
+    main.innerHTML = heading();
+    const box = document.createElement("div");
+    main.appendChild(box);
+    errorWithRetry(box, e.message, renderReports);
+    wireTabs();
+    return;
+  }
+
+  //  The archive call returns open ones too, so the open list is not repeated
+  //  above the history of itself.
+  if (reportsShowArchive) rows = rows.filter(r => r.resolved_at);
+
+  if (!rows.length) {
+    main.innerHTML = heading() + `<p class="empty">${
+      reportsShowArchive ? "Nothing has been resolved yet."
+                         : "Nothing to review. Resolved reports are in the archive."}</p>`;
+    wireTabs();
+    return;
+  }
 
   //  One signing request for the whole page, the same reasoning
   //  PhotoDownloader gives: a page of photos should not be a round trip each.
@@ -662,12 +745,13 @@ async function renderReports() {
     (data ?? []).forEach(d => { if (d.signedUrl) signed[d.path] = d.signedUrl; });
   }
 
-  main.innerHTML = `<h2>Reports (${rows.length})</h2>` + rows.map(r => `
+  main.innerHTML = heading() + rows.map(r => `
     <div class="card" data-id="${esc(r.id)}">
       <div class="row">
         <span class="tag">${esc(r.target_kind)}</span>
         ${r.suspended ? '<span class="tag red">SUSPENDED</span>'
           : (r.pressure >= 2 ? '<span class="tag red">URGENT</span>' : "")}
+        ${r.resolved_at ? `<span class="tag grey">resolved ${esc(day(r.resolved_at))}</span>` : ""}
         <span class="muted" style="margin-left:auto">${esc(day(r.created_at))}</span>
       </div>
       ${r.image_path && signed[r.image_path]
@@ -679,13 +763,17 @@ async function renderReports() {
         ${r.reporter ? ` · reported by ${face(r.reporter_avatar, r.reporter)} @${esc(r.reporter)}` : ""}
         ${r.pressure > 1 ? " · " + r.pressure + " different reporters this week" : ""}</p>
       <div class="row">
+        ${r.resolved_at ? "" : `
         <button class="danger" data-act="remove">Remove</button>
-        <button class="quiet"  data-act="dismiss">Dismiss</button>
+        <button class="quiet"  data-act="dismiss">Dismiss</button>`}
         ${r.reported ? `<button class="quiet" data-act="suspend"
            data-user="${esc(r.reported)}" data-on="${r.suspended ? 0 : 24}"
            style="margin-left:auto">${r.suspended ? "Unsuspend" : "Suspend 24h"}</button>` : ""}
       </div>
     </div>`).join("");
+
+  wireTabs();
+  wirePhotoFallbacks(main);
 
   main.querySelectorAll("[data-act]").forEach(b => b.onclick = async () => {
     const card = b.closest(".card");
@@ -728,7 +816,7 @@ async function renderPremium() {
     results.innerHTML = `<p class="muted">Searching…</p>`;
     let rows;
     try { rows = await rpc("admin_find_users", { p_query: q }); }
-    catch (e) { results.innerHTML = `<p class="note">${esc(e.message)}</p>`; return; }
+    catch (e) { errorWithRetry(results, e.message, run); return; }
 
     if (!rows.length) { results.innerHTML = `<p class="empty">No account starts with that.</p>`; return; }
 
@@ -1073,7 +1161,7 @@ async function loadFeedback() {
   if (!box) return;
   let rows;
   try { rows = await rpc("list_app_feedback"); }
-  catch (e) { box.innerHTML = `<p class="note">${esc(e.message)}</p>`; return; }
+  catch (e) { errorWithRetry(box, e.message, loadFeedback); return; }
 
   if (!rows.length) { box.innerHTML = `<p class="empty">Nothing reported.</p>`; return; }
 
@@ -1104,7 +1192,7 @@ async function loadSuggestions() {
   if (!box) return;
   let rows;
   try { rows = await rpc("list_prompt_suggestions"); }
-  catch (e) { box.innerHTML = `<p class="note">${esc(e.message)}</p>`; return; }
+  catch (e) { errorWithRetry(box, e.message, loadSuggestions); return; }
 
   if (!rows.length) { box.innerHTML = `<p class="empty">No suggestions yet.</p>`; return; }
 
@@ -1639,17 +1727,44 @@ const TABS = { home: renderHome, reports: renderReports, prompts: renderPrompts,
                push: renderPush, inbox: renderInbox, premium: renderPremium,
                content: renderContent };
 
-function go(tab) {
+//  Tabs are history entries, so Back means "the tab I was on" rather than
+//  "leave the console". Without this the first Back left the page entirely
+//  and landed on the OAuth redirect, which re-renders the sign-in screen --
+//  so the browser's most-used control appeared to sign the operator out.
+//
+//  replaceState for the tab you are already on, pushState for a move: opening
+//  Home, Reports, Home should be two entries, not three, or Back walks a
+//  history of somewhere you never went.
+function go(tab, opts = {}) {
+  if (!TABS[tab]) tab = "home";
   nav.querySelectorAll("button").forEach(b =>
     b.setAttribute("aria-current", String(b.dataset.tab === tab)));
+
+  if (!opts.fromHistory) {
+    const at = new URL(window.location.href);
+    at.hash = tab;
+    if (currentTab === tab) history.replaceState({ tab }, "", at);
+    else                    history.pushState({ tab }, "", at);
+  }
+  currentTab = tab;
   TABS[tab]();
 }
+
+let currentTab = null;
 
 nav.addEventListener("click", async (e) => {
   const tab = e.target.dataset?.tab;
   if (!tab) return;
   if (tab === "signout") { await sb.auth.signOut(); renderSignIn(); return; }
   go(tab);
+});
+
+window.addEventListener("popstate", (e) => {
+  //  Only steer when signed in. Popping back to the sign-in screen is a real
+  //  destination for somebody who has just signed out.
+  if (nav.hidden) return;
+  const tab = e.state?.tab || (window.location.hash || "").replace(/^#/, "") || "home";
+  go(tab, { fromHistory: true });
 });
 
 async function boot() {
@@ -1664,7 +1779,11 @@ async function boot() {
 
   nav.hidden = false;
   who.textContent = session.user.email ?? "";
-  go("home");
+
+  //  Sign-in comes back through an OAuth redirect whose hash carries the
+  //  token, not a tab. Anything that is not a known tab means Home.
+  const asked = (window.location.hash || "").replace(/^#/, "");
+  go(TABS[asked] ? asked : "home");
 }
 
 sb.auth.onAuthStateChange((event) => {
