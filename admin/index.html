@@ -74,7 +74,8 @@
     --hairline:  #232b42;
     --text:      #ffffff;
     --secondary: #9da8c1;
-    --accent:    #5b8def;
+    --accent:    #0096ff;
+    --on-accent: #0b121b;
     --danger:    #ff6b6b;
     --good:      #4ec9a0;
   }
@@ -116,7 +117,7 @@
   }
   h2 { font-size: 15px; margin: 26px 0 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--secondary); }
   button.action {
-    background: var(--accent); color: #fff; border: 0; border-radius: 999px;
+    background: var(--accent); color: var(--on-accent); border: 0; border-radius: 999px;
     padding: 9px 16px; font: inherit; font-weight: 600; cursor: pointer;
   }
   button.quiet { background: none; color: var(--accent); border: 0; font: inherit; font-weight: 600; cursor: pointer; padding: 6px 0; }
@@ -129,7 +130,7 @@
   .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
   .tag {
     font-size: 11px; font-weight: 700; letter-spacing: .08em;
-    padding: 3px 8px; border-radius: 999px; background: var(--accent); color: #fff;
+    padding: 3px 8px; border-radius: 999px; background: var(--accent); color: var(--on-accent);
   }
   .tag.grey { background: var(--secondary); }
   .tag.red  { background: var(--danger); }
@@ -261,6 +262,7 @@
     <button data-tab="push">Push</button>
     <button data-tab="inbox">Inbox</button>
     <button data-tab="premium">Premium</button>
+    <button data-tab="backups">Backups</button>
     <button data-tab="signout">Sign out</button>
   </nav>
 </header>
@@ -620,24 +622,26 @@ function backupWidget(b, err) {
   const trouble = backupTrouble(b, err);
   const cls = trouble ? "widget bad" : "widget";
 
-  //  Not a button: there is nowhere in this console to go. The deep tool lives
-  //  behind Cloudflare Access on the box itself, so the widget states the fact
-  //  and the alarm above carries the urgency.
+  //  A button now. This said "there is nowhere in this console to go", which
+  //  was true until the Backups tab existed and was the whole complaint: the
+  //  card carries a file count, and the questions an operator actually has --
+  //  is the last dump usable, how old is the encrypted copy, has it been
+  //  failing quietly -- were all one RPC away and unreachable.
   if (trouble === "unreachable")
-    return `<div class="${cls}"><h3>Backups</h3>
-      <div class="sub">status unavailable</div></div>`;
+    return `<button class="${cls}" data-go="backups"><h3>Backups</h3>
+      <div class="sub">status unavailable</div></button>`;
 
   if (trouble === "silent")
-    return `<div class="${cls}"><h3>Backups · silent</h3>
-      <div class="sub">${b && b.at ? `last beat ${esc(b.age_minutes)} min ago` : "never reported"}</div></div>`;
+    return `<button class="${cls}" data-go="backups"><h3>Backups · silent</h3>
+      <div class="sub">${b && b.at ? `last beat ${esc(b.age_minutes)} min ago` : "never reported"}</div></button>`;
 
   if (trouble === "failing")
-    return `<div class="${cls}"><h3>Backups · failing</h3>
-      <div class="sub">${esc(b.db_consecutive_failures)} empty in a row</div></div>`;
+    return `<button class="${cls}" data-go="backups"><h3>Backups · failing</h3>
+      <div class="sub">${esc(b.db_consecutive_failures)} empty in a row</div></button>`;
 
-  return `<div class="${cls}"><h3>Backups</h3>
+  return `<button class="${cls}" data-go="backups"><h3>Backups</h3>
     <div class="sub">${esc(b.database_backups_ok ?? "?")} usable · ${esc(b.storage_files ?? "?")} files ·
-      ${esc(Math.round((b.database_size_mb ?? 0) + (b.storage_size_mb ?? 0)))} MB</div></div>`;
+      ${esc(Math.round((b.database_size_mb ?? 0) + (b.storage_size_mb ?? 0)))} MB</div></button>`;
 }
 
 function fmtWhen(iso) {
@@ -1795,9 +1799,165 @@ async function contentAccess(filters, body) {
 
 // ---------------------------------------------------------------------------
 
+
+// ---------------------------------------------------------------------------
+//  Backups
+// ---------------------------------------------------------------------------
+//
+//  The card on Home carries a file count, which answers none of the questions
+//  an operator actually has. `backup_status` has always returned twelve
+//  fields and `backup_history` has always returned the last fifty beats, and
+//  nothing drew either -- so "is the newest dump usable", "how old is the
+//  encrypted copy" and "has this been failing quietly" were all one RPC away
+//  and unreachable.
+//
+//  THE FAILURE THIS PAGE IS SHAPED AROUND
+//
+//  The database half of this backup once produced 452 consecutive EMPTY dumps
+//  while the panel said fine, for five days. A green light that only means
+//  "the daemon is running" is worse than no light, so every row below says
+//  what it is and when it last happened, and the two rows that can be quietly
+//  wrong -- the age of the newest usable dump, and the age of the newest
+//  encrypted copy -- are called out rather than left in a list.
+//
+//  Nothing here can BE done from the console. The box is behind Cloudflare
+//  Access and the fixes need a shell, so this page reports and links; it does
+//  not pretend to have buttons that work.
+
+function ago(iso) {
+  if (!iso) return "never";
+  const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 48) return `${hrs} hr ago`;
+  return `${Math.round(hrs / 24)} days ago`;
+}
+
+//  A number of hours, judged rather than printed. The thresholds are the ones
+//  the daemon itself runs on: a cycle every 30 minutes, a dump every night.
+function freshness(hours, warnAfter, badAfter) {
+  if (hours === null || hours === undefined) return { word: "unknown", bad: true };
+  const h = Number(hours);
+  if (h >= badAfter)  return { word: `${Math.round(h)} hr old`, bad: true };
+  if (h >= warnAfter) return { word: `${Math.round(h)} hr old`, warn: true };
+  return { word: `${Math.round(h)} hr old`, ok: true };
+}
+
+function bigRow(label, value, state, note) {
+  const colour = state.bad ? "var(--danger)"
+               : state.warn ? "var(--accent)" : "var(--good)";
+  return `<div class="widget" style="text-align:left">
+    <h3 style="color:${colour}">${esc(value)}</h3>
+    <div class="sub"><strong>${esc(label)}</strong></div>
+    ${note ? `<div class="sub">${esc(note)}</div>` : ""}
+  </div>`;
+}
+
+async function renderBackups() {
+  main.innerHTML = `<div class="muted">Loading…</div>`;
+
+  let b = null, hist = [], err = null;
+  try {
+    b = (await rpc("backup_status", { p_source: "tayka-backup" }))?.[0] ?? null;
+    hist = (await rpc("backup_history", { p_source: "tayka-backup", p_limit: 50 })) ?? [];
+  } catch (e) { err = e.message; }
+
+  if (err) { errorWithRetry(main, err, () => renderBackups()); return; }
+
+  if (!b) {
+    main.innerHTML = `<h2>Backups</h2>
+      <div class="alarm"><h3>The backup has never reported</h3>
+      <div class="sub">No heartbeat has ever reached this database from
+      <code>tayka-backup</code>. Either the box has never run, or its heartbeat
+      cannot reach Supabase. Check <code>systemctl status tayka-sync</code> on the box.</div></div>`;
+    return;
+  }
+
+  const detail = b.detail || {};
+  const dumpAge = freshness(b.db_backup_age_hours, 26, 48);
+  const encAge  = freshness(detail.encrypted_db_age_hours, 26, 48);
+  const beat    = b.age_minutes === null || b.age_minutes === undefined
+                    ? { word: "never", bad: true }
+                    : (b.age_minutes > 120 ? { word: `${Math.round(b.age_minutes)} min ago`, bad: true }
+                       : b.age_minutes > 60 ? { word: `${Math.round(b.age_minutes)} min ago`, warn: true }
+                       : { word: `${Math.round(b.age_minutes)} min ago`, ok: true });
+
+  //  The three that can be quietly wrong, first and large. Everything else is
+  //  a fact in a table below.
+  const headline = `
+    <div class="widgets">
+      ${bigRow("Newest usable database dump", dumpAge.word, dumpAge,
+               b.last_db_backup ? `taken ${fmtWhen(b.last_db_backup)}` : "there is no usable dump at all")}
+      ${bigRow("Newest encrypted copy", encAge.word, encAge,
+               "decryptable only with the key on Noah's Mac")}
+      ${bigRow("Last heartbeat", beat.word, beat,
+               b.is_stale ? "the box has stopped reporting" : "the daemon is reporting in")}
+    </div>`;
+
+  const failing = (b.db_consecutive_failures ?? 0) > 0;
+  const alarm = failing
+    ? `<div class="alarm"><h3>The backup is running and failing</h3>
+        <div class="sub">${esc(b.db_consecutive_failures)} database dump${b.db_consecutive_failures === 1 ? "" : "s"}
+        in a row produced nothing. The daemon is alive, which is why nothing else looks wrong.
+        This is the exact shape of the failure that ran for five days: 452 empty dumps behind a green light.</div></div>`
+    : "";
+
+  const rows = [
+    ["Source", b.source],
+    ["Database healthy", b.db_healthy ? "yes" : "no"],
+    ["Consecutive failed dumps", b.db_consecutive_failures ?? 0],
+    ["Usable database backups kept", b.database_backups_ok ?? "?"],
+    ["Database size", b.database_size_mb != null ? `${Math.round(b.database_size_mb)} MB` : "?"],
+    ["Photo files mirrored", b.storage_files ?? "?"],
+    ["Photo size", b.storage_size_mb != null ? `${Math.round(b.storage_size_mb)} MB` : "?"],
+    ["Last full sync", b.last_sync ? `${fmtWhen(b.last_sync)} (${ago(b.last_sync)})` : "never"],
+    ["Last usable dump", b.last_db_backup ? `${fmtWhen(b.last_db_backup)} (${ago(b.last_db_backup)})` : "never"],
+    ["Heartbeat at", b.at ? `${fmtWhen(b.at)} (${ago(b.at)})` : "never"],
+  ];
+  //  Anything the box reports that this page does not have a row for. Written
+  //  out rather than dropped, so a field added on the box shows up here the
+  //  day it starts being sent instead of waiting for someone to edit this file.
+  const known = new Set(["encrypted_db_age_hours"]);
+  for (const [k, v] of Object.entries(detail)) {
+    if (known.has(k)) continue;
+    rows.push([k.replace(/_/g, " "), typeof v === "object" ? JSON.stringify(v) : String(v)]);
+  }
+
+  const table = `<h2>What the box last said</h2>
+    <table><tbody>${rows.map(([k, v]) =>
+      `<tr><td class="muted">${esc(k)}</td><td>${esc(v)}</td></tr>`).join("")}</tbody></table>`;
+
+  //  One cell per beat, newest on the right, so a run of failures is a visible
+  //  band rather than a number somebody has to notice.
+  const strip = hist.length ? `<h2>The last ${hist.length} cycles</h2>
+    <div class="bars" style="display:flex;gap:3px;align-items:flex-end;height:52px">
+      ${hist.slice().reverse().map(h => {
+        const bad = !h.db_healthy || (h.db_consecutive_failures ?? 0) > 0;
+        return `<div class="bar" title="${esc(fmtWhen(h.at))} — ${bad ? "failing" : "ok"}"
+          style="flex:1;height:${bad ? 100 : 60}%;border-radius:2px;
+          background:${bad ? "var(--danger)" : "var(--good)"}"></div>`;
+      }).join("")}
+    </div>
+    <p class="muted">Newest on the right. A tall red cell is a cycle whose database dump produced nothing.</p>`
+    : `<p class="muted">No history yet.</p>`;
+
+  const runbook = `<h2>If something here is wrong</h2>
+    <p class="muted">Nothing on this page can be fixed from the console; the box is behind
+    Cloudflare Access and the fixes need a shell. On the Mac:</p>
+    <table><tbody>
+      <tr><td class="muted">Look at the daemon</td><td><code>ssh tayka</code> then <code>journalctl -u tayka-sync -n 50</code></td></tr>
+      <tr><td class="muted">Run a cycle now</td><td><code>systemctl --user restart tayka-sync</code></td></tr>
+      <tr><td class="muted">Check a dump is real</td><td><code>gzip -dc backups/db/&lt;newest&gt;.sql.gz | head</code></td></tr>
+      <tr><td class="muted">Decrypt a copy</td><td>needs the private key, which exists only on Noah's Mac</td></tr>
+    </tbody></table>`;
+
+  main.innerHTML = `<h2>Backups</h2>${alarm}${headline}${table}${strip}${runbook}`;
+}
+
 const TABS = { home: renderHome, reports: renderReports, prompts: renderPrompts,
                push: renderPush, inbox: renderInbox, premium: renderPremium,
-               content: renderContent };
+               content: renderContent, backups: renderBackups };
 
 //  Tabs are history entries, so Back means "the tab I was on" rather than
 //  "leave the console". Without this the first Back left the page entirely
