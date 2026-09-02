@@ -408,16 +408,67 @@ let homeTimer = null;
 //
 //  So a refresh that fails leaves what is on screen alone and says so quietly.
 //  Only a load with nothing behind it may take the page.
-function homeError(message, isRefresh) {
-  if (isRefresh) {
-    const note = document.getElementById("homeNote");
-    if (note) {
-      note.textContent = "Couldn't refresh just now. Showing the last figures.";
-      note.className = "note";
-    }
+//  How the footer reports on a background poll.
+//
+//  It used to turn red the instant one refresh failed and stay red, under
+//  figures that were perfectly good. A permanent red line beneath working
+//  numbers says the panel is broken when it is not, and an operator who
+//  learns to ignore it will ignore the one that matters -- the same reason
+//  the Sync Daemon row on the backup box was replaced when it had been
+//  reading "Inactive" since the day cron was retired.
+//
+//  So: normally it says when the figures are from. A stumble or two is
+//  invisible, because a 30-second poll missing once is not news. Only a run
+//  of failures is worth colouring, and by then the timestamp says how stale
+//  the numbers actually are, which is the thing an operator needs to know.
+let homeRefreshFailures = 0;
+let homeLastUpdated = null;
+let homeLastFailure = null;
+
+const REFRESH_FAILURES_BEFORE_ALARM = 3;
+
+function homeFooter() {
+  const note = document.getElementById("homeNote");
+  if (!note) return;
+
+  const at = homeLastUpdated
+    ? homeLastUpdated.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" })
+    : null;
+
+  if (homeRefreshFailures >= REFRESH_FAILURES_BEFORE_ALARM) {
+    note.textContent = at
+      ? `Not refreshing. These figures are from ${at}.`
+      : "Not refreshing.";
+    note.className = "note";
+    //  The reason, on hover. The message used to be thrown away on a refresh
+    //  failure, which left "couldn't refresh" as the only evidence there was
+    //  and nothing to diagnose it with. The database answers these in 35ms,
+    //  so when this fires the cause is almost always between here and there.
+    note.title = homeLastFailure
+      ? `${homeRefreshFailures} failed attempts. Last: ${homeLastFailure}`
+      : "";
     return;
   }
+  note.title = "";
+
+  note.textContent = at
+    ? `Updated ${at}. Refreshes every 30 seconds.`
+    : "Counts refresh every 30 seconds.";
+  note.className = "muted";
+}
+
+function homeError(message, isRefresh) {
+  if (isRefresh) {
+    homeRefreshFailures += 1;
+    homeLastFailure = message;
+    homeFooter();
+    return;
+  }
+  //  A FIRST load that fails has nothing behind it, so it is the whole screen.
   main.innerHTML = `<p class="note">${esc(message)}</p>`;
+  const box = document.createElement("div");
+  main.appendChild(box);
+  errorWithRetry(box, "", () => renderHome());
 }
 
 //  A tile is a button when there is a list behind it, and a plain div when
@@ -653,6 +704,12 @@ async function renderHome(isRefresh = false) {
     </div>
 
     <p class="muted" id="homeNote">Counts refresh every 30 seconds.</p>`;
+
+  //  Reached only when every fetch above succeeded, so this is the honest
+  //  moment to call the figures current.
+  homeRefreshFailures = 0;
+  homeLastUpdated = new Date();
+  homeFooter();
 
   main.querySelectorAll("[data-go]").forEach(b => b.onclick = () => go(b.dataset.go));
   main.querySelectorAll("[data-detail]").forEach(b => b.onclick = () =>
