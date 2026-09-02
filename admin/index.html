@@ -178,6 +178,16 @@
     padding: 14px; text-align: left; color: inherit; font: inherit; cursor: pointer;
   }
   .widget:hover { border-color: var(--accent); }
+  /*  The backup alarm. Deliberately loud: the failure it exists to catch ran
+      for five days behind a panel that showed a stale date in plain text.  */
+  .alarm {
+    border: 1px solid var(--danger); border-left-width: 4px; border-radius: 10px;
+    background: rgba(255,107,107,0.08); padding: 12px 14px; margin: 0 0 18px;
+  }
+  .alarm h3 { margin: 0 0 4px; font-size: 15px; color: var(--danger); }
+  .alarm .sub { color: var(--secondary); font-size: 13px; }
+  .widget.bad { border-color: var(--danger); }
+  .widget.bad h3 { color: var(--danger); }
   .widget h3 { margin: 0 0 4px; font-size: 15px; }
   .widget .sub { color: var(--secondary); font-size: 13px; }
   .preview {
@@ -379,6 +389,93 @@ function when(iso) {
     : { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
+// ---------------------------------------------------------------------------
+//  Backups
+// ---------------------------------------------------------------------------
+//  The database half of backup.tayka.app once produced 452 consecutive EMPTY
+//  dumps over five days and reported success throughout: the daemon logged the
+//  failure into journald where nobody looks, and the box's own panel could not
+//  represent "broken". Nothing a person opens daily said a word.
+//
+//  So the rule these two functions exist to enforce is: SILENCE IS BROKEN.
+//  `is_stale` comes from the server, computed against the server's clock, and
+//  a box that has never reported comes back as one row flagged stale rather
+//  than as no rows. Neither of these may ever draw a blank for a bad state.
+
+function backupTrouble(b, err) {
+  if (err) return "unreachable";          // we could not ask
+  if (!b) return "unreachable";           // the call worked and said nothing
+  if (b.is_stale) return "silent";        // the box has stopped reporting
+  if (!b.db_healthy) return "failing";    // it is reporting, and it is broken
+  return null;
+}
+
+function backupAlarm(b, err) {
+  const trouble = backupTrouble(b, err);
+  if (!trouble) return "";
+
+  //  Built one branch at a time, NOT as an object of all three. An object
+  //  evaluates every arm, so the `failing` text dereferenced a beat that is
+  //  null in the `unreachable` case -- and the throw landed in renderHome with
+  //  nothing to catch it, blanking the whole page at the exact moment the
+  //  backup could not be reached. The alarm must not be the thing that breaks.
+  let lines;
+  if (trouble === "unreachable") {
+    lines = [
+      "Backup status could not be read",
+      err ? esc(err) : "The console asked and got nothing back. Check backup.tayka.app directly.",
+    ];
+  } else if (trouble === "silent") {
+    lines = [
+      "The backup has stopped reporting",
+      b && b.at
+        ? `Last heard from ${esc(fmtWhen(b.at))} (${esc(b.age_minutes)} minutes ago). The box may be off, offline, or the sync daemon may have died.`
+        : "It has never reported. Nothing is known to be backed up.",
+    ];
+  } else {
+    const n = b.db_consecutive_failures ?? 0;
+    lines = [
+      "The backup is running and failing",
+      `${esc(n)} database backup${n === 1 ? "" : "s"} in a row produced nothing.` +
+      (b.last_db_backup ? ` The last usable one was ${esc(fmtWhen(b.last_db_backup))}.`
+                        : " There is no usable backup at all."),
+    ];
+  }
+
+  return `<div class="alarm">
+    <h3>${lines[0]}</h3>
+    <div class="sub">${lines[1]}</div>
+  </div>`;
+}
+
+function backupWidget(b, err) {
+  const trouble = backupTrouble(b, err);
+  const cls = trouble ? "widget bad" : "widget";
+
+  //  Not a button: there is nowhere in this console to go. The deep tool lives
+  //  behind Cloudflare Access on the box itself, so the widget states the fact
+  //  and the alarm above carries the urgency.
+  if (trouble === "unreachable")
+    return `<div class="${cls}"><h3>Backups</h3>
+      <div class="sub">status unavailable</div></div>`;
+
+  if (trouble === "silent")
+    return `<div class="${cls}"><h3>Backups · silent</h3>
+      <div class="sub">${b && b.at ? `last beat ${esc(b.age_minutes)} min ago` : "never reported"}</div></div>`;
+
+  if (trouble === "failing")
+    return `<div class="${cls}"><h3>Backups · failing</h3>
+      <div class="sub">${esc(b.db_consecutive_failures)} empty in a row</div></div>`;
+
+  return `<div class="${cls}"><h3>Backups</h3>
+    <div class="sub">${esc(b.database_backups_ok ?? "?")} usable · ${esc(b.storage_files ?? "?")} files ·
+      ${esc(Math.round((b.database_size_mb ?? 0) + (b.storage_size_mb ?? 0)))} MB</div></div>`;
+}
+
+function fmtWhen(iso) {
+  try { return new Date(iso).toLocaleString(); } catch { return iso; }
+}
+
 async function renderHome(isRefresh = false) {
   if (!isRefresh && !main.querySelector(".stats")) {
     main.innerHTML = `<div class="muted">Loading…</div>`;
@@ -394,7 +491,17 @@ async function renderHome(isRefresh = false) {
     todayRating = rated?.[0] ?? null;
   } catch (e) { homeError(e.message, isRefresh); return; }
 
+  //  Backup status is fetched separately and is NEVER allowed to take the home
+  //  page down with it. The console has already had that bug once: a failing
+  //  refresh wrote its error over the whole panel. A widget that cannot load
+  //  is its own third state and says so.
+  let backup = null, backupErr = null;
+  try {
+    backup = (await rpc("backup_status", { p_source: "tayka-backup" }))?.[0] ?? null;
+  } catch (e) { backupErr = e.message; }
+
   main.innerHTML = `
+    ${backupAlarm(backup, backupErr)}
     <h2>Today · day ${esc(d.today_index)}</h2>
     <div class="preview">
       <div class="lead">${esc(PROMPT_LEAD)}</div>
@@ -440,6 +547,7 @@ async function renderHome(isRefresh = false) {
         <h3>Premium</h3>
         <div class="sub">search an account, switch it</div>
       </button>
+      ${backupWidget(backup, backupErr)}
     </div>
 
     <p class="muted" id="homeNote">Counts refresh every 30 seconds.</p>`;
