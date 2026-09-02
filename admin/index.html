@@ -46,9 +46,25 @@
 -->
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--  viewport-fit=cover so the page paints under the notch and the home
+      indicator; the safe-area padding below keeps content out from under
+      them. Without both, a standalone web app has a white strip at the top. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
 <title>Tayka Admin</title>
+
+<!--  Add to Home Screen. The manifest is what modern iOS reads; the two
+      apple- meta tags are the older mechanism and still the ones that decide
+      the status bar, so both are here. -->
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Tayka Admin">
+<!--  black-translucent, so the status bar sits over the page's own dark
+      ground rather than over a white bar of its own. -->
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#08090f">
 <style>
   /* Theme.Share, the app's one fixed palette. This screen is operator
      furniture and never follows the accent. */
@@ -75,7 +91,10 @@
   }
   header {
     display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
-    padding: 18px 20px; border-bottom: 1px solid var(--hairline);
+    /*  The extra top padding is the notch. In a browser tab env() is 0 and
+        this is an ordinary 18px, so one rule covers both. */
+    padding: calc(18px + env(safe-area-inset-top)) 20px 18px;
+    border-bottom: 1px solid var(--hairline);
     position: sticky; top: 0; background: var(--ground); z-index: 10;
   }
   .wordmark { font-weight: 900; letter-spacing: 0.23em; font-size: 15px; }
@@ -85,7 +104,12 @@
     font: inherit; padding: 6px 10px; border-radius: 8px;
   }
   nav button[aria-current="true"] { background: var(--panel); color: var(--text); }
-  main { max-width: 860px; margin: 0 auto; padding: 24px 20px 80px; }
+  main {
+    max-width: 860px; margin: 0 auto;
+    /*  The bottom pad clears the home indicator, and is generous besides:
+        the last row of a queue should not sit against the edge of the glass. */
+    padding: 24px max(20px, env(safe-area-inset-left)) calc(80px + env(safe-area-inset-bottom));
+  }
   .card {
     background: var(--panel); border: 1px solid var(--hairline);
     border-radius: 14px; padding: 16px; margin-bottom: 14px;
