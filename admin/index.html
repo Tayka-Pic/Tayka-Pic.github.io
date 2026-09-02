@@ -262,7 +262,9 @@
     <button data-tab="push">Push</button>
     <button data-tab="inbox">Inbox</button>
     <button data-tab="premium">Premium</button>
+    <button data-tab="usage">Usage</button>
     <button data-tab="backups">Backups</button>
+    <button data-tab="operators">Operators</button>
     <button data-tab="signout">Sign out</button>
   </nav>
 </header>
@@ -619,6 +621,11 @@ function backupAlarm(b, err) {
 }
 
 function backupWidget(b, err) {
+  //  An admin sees no backup card at all. It would be a widget reporting on
+  //  something they cannot open, and its alarm state would be an emergency
+  //  they cannot act on.
+  if (!nav.querySelector('[data-tab="backups"]') ||
+      nav.querySelector('[data-tab="backups"]').hidden) return "";
   const trouble = backupTrouble(b, err);
   const cls = trouble ? "widget bad" : "widget";
 
@@ -1955,9 +1962,211 @@ async function renderBackups() {
   main.innerHTML = `<h2>Backups</h2>${alarm}${headline}${table}${strip}${runbook}`;
 }
 
+
+// ---------------------------------------------------------------------------
+//  Usage over time
+// ---------------------------------------------------------------------------
+//
+//  admin_dashboard could say how many people posted today and could not say
+//  whether today was better or worse than last Tuesday. Worse, it could not
+//  tell apart the two failures that matter most to a daily app: somebody who
+//  has stopped opening Tayka is lost, and somebody who opens it and does not
+//  post is a prompt problem or a friend problem and is still there to be won
+//  back. One "posted today" figure reports those identically.
+//
+//  A stacked bar rather than three lines, because the three populations add up
+//  to one whole: a line per population makes the reader do the addition, a
+//  stack shows the whole and the split in the same glyph. The conversion rate
+//  is written out in words above it, because it is the number the rest of the
+//  screen exists to explain.
+//
+//  No chart library. Three divs in a column with percentage heights is the
+//  whole of it, and the console loads nothing it does not need.
+
+let usageDays = 30;
+
+function usageBar(d, tallest) {
+  const total = Math.max(d.total_users, 1);
+  const h = (n) => `${(n / total) * 100}%`;
+  //  Posted, then opened-without-posting, then absent, bottom to top. The band
+  //  that matters most shares an edge with the axis so it can be compared
+  //  across days by eye.
+  const posted = d.opened_and_posted + d.posted_not_opened;
+  const when = new Date(d.day_start).toLocaleDateString(undefined,
+                 { month: "short", day: "numeric" });
+  return `<div class="ubar" title="${esc(when)} — ${esc(posted)} posted, ${esc(d.opened_not_posted)} opened only, ${esc(d.neither)} absent, of ${esc(d.total_users)}"
+       style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;
+              height:${(total / Math.max(tallest, 1)) * 100}%;min-width:4px">
+    <div style="height:${h(d.neither)};background:var(--hairline)"></div>
+    <div style="height:${h(d.opened_not_posted)};background:var(--accent);opacity:.4"></div>
+    <div style="height:${h(posted)};background:var(--accent)"></div>
+  </div>`;
+}
+
+function usageKey(colour, name, detail, opacity) {
+  return `<div class="row" style="align-items:flex-start;gap:8px;margin-bottom:6px">
+    <span style="width:12px;height:12px;border-radius:3px;flex:0 0 auto;margin-top:3px;
+                 background:${colour};opacity:${opacity ?? 1}"></span>
+    <div><strong>${esc(name)}</strong><div class="sub">${esc(detail)}</div></div>
+  </div>`;
+}
+
+async function renderUsage() {
+  main.innerHTML = `<div class="muted">Loading…</div>`;
+
+  let days;
+  try { days = await rpc("usage_by_day", { p_days: usageDays }); }
+  catch (e) { errorWithRetry(main, e.message, () => renderUsage()); return; }
+
+  const picker = `<div class="subnav" id="unav">
+      ${[7, 30, 90].map(n =>
+        `<button data-days="${n}" aria-current="${n === usageDays}">${n} days</button>`).join("")}
+    </div>`;
+
+  if (!days || days.length === 0) {
+    main.innerHTML = `<h2>Usage</h2>${picker}
+      <p class="muted">No usage recorded yet. Opens are recorded from the build that
+      added them, so this fills in from today forward.</p>`;
+    main.querySelectorAll("#unav button").forEach(b =>
+      b.onclick = () => { usageDays = Number(b.dataset.days); renderUsage(); });
+    return;
+  }
+
+  const latest = days[days.length - 1];
+  const tallest = Math.max(...days.map(d => d.total_users), 1);
+  const rate = latest.opened ? Math.round((latest.opened_and_posted / latest.opened) * 100) : null;
+
+  const headline = rate === null
+    ? `<p class="muted">Nobody has opened Tayka yet today.</p>`
+    : `<p class="muted">Today <strong>${esc(latest.opened)}</strong> of
+       ${esc(latest.total_users)} opened Tayka and <strong>${esc(latest.opened_and_posted)}</strong>
+       of those posted, which is <strong>${esc(rate)}%</strong>.</p>`;
+
+  main.innerHTML = `<h2>Usage</h2>${picker}${headline}
+    <div style="display:flex;gap:2px;align-items:flex-end;height:180px;
+                border-bottom:1px solid var(--hairline);padding-bottom:2px">
+      ${days.map(d => usageBar(d, tallest)).join("")}
+    </div>
+    <p class="muted" style="margin-top:6px">Oldest on the left. Bar height is the
+      accounts that existed that day, so the bars grow as Tayka does.</p>
+
+    <h2>What the bands mean</h2>
+    ${usageKey("var(--accent)", "Posted", "Answered the prompt.")}
+    ${usageKey("var(--accent)", "Opened, no Tayk", "Came back and left without posting.", .4)}
+    ${usageKey("var(--hairline)", "Did not open", "Did not open Tayka at all.")}
+
+    <h2>The numbers</h2>
+    <table><tbody>
+      <tr><td class="muted">Day</td><td class="muted">Posted</td>
+          <td class="muted">Opened</td><td class="muted">Accounts</td><td class="muted">New</td></tr>
+      ${days.slice().reverse().map(d => `<tr>
+        <td>${esc(new Date(d.day_start).toLocaleDateString(undefined, { month: "short", day: "numeric" }))}</td>
+        <td>${esc(d.opened_and_posted + d.posted_not_opened)}</td>
+        <td>${esc(d.opened)}</td>
+        <td>${esc(d.total_users)}</td>
+        <td>${esc(d.new_users)}</td></tr>`).join("")}
+    </tbody></table>`;
+
+  main.querySelectorAll("#unav button").forEach(b =>
+    b.onclick = () => { usageDays = Number(b.dataset.days); renderUsage(); });
+}
+
+// ---------------------------------------------------------------------------
+//  Operators
+// ---------------------------------------------------------------------------
+//
+//  Owner-only, and the server says so rather than this file. list_admins,
+//  add_admin, remove_admin and set_admin_role all check is_owner() as their
+//  first line, so hiding the tab is a courtesy and not the control: an admin
+//  who forced the nav open finds every button refused.
+//
+//  Why the split exists at all: an admin who can appoint an admin can appoint
+//  themselves an owner, and then owner means nothing. Everything else an
+//  operator could do yesterday, an admin can still do.
+
+async function renderOperators() {
+  main.innerHTML = `<div class="muted">Loading…</div>`;
+
+  let rows;
+  try { rows = await rpc("list_admins"); }
+  catch (e) { errorWithRetry(main, e.message, () => renderOperators()); return; }
+
+  if (!rows || rows.length === 0) {
+    main.innerHTML = `<h2>Operators</h2>
+      <p class="note">Only an owner can see or change the operator list.</p>`;
+    return;
+  }
+
+  const owners = rows.filter(r => r.role === "owner").length;
+
+  main.innerHTML = `<h2>Operators</h2>
+    <table><tbody>
+      ${rows.map(r => `<tr>
+        <td>
+          <strong>@${esc(r.username)}</strong>
+          <span class="tag${r.role === "owner" ? "" : " grey"}">${esc(r.role)}</span>
+          ${r.is_you ? `<span class="muted"> · you</span>` : ""}
+          <div class="sub">added ${esc(fmtWhen(r.added_at))}</div>
+        </td>
+        <td style="text-align:right;white-space:nowrap">
+          ${r.role === "owner"
+            ? `<button class="quiet" data-role="admin" data-user="${esc(r.username)}"
+                 ${owners <= 1 ? "disabled title='the last owner cannot be demoted'" : ""}>Make admin</button>`
+            : `<button class="quiet" data-role="owner" data-user="${esc(r.username)}">Make owner</button>`}
+          <button class="danger" data-remove="${esc(r.username)}"
+            ${r.role === "owner" && owners <= 1 ? "disabled title='the last owner cannot be removed'" : ""}>Remove</button>
+        </td></tr>`).join("")}
+    </tbody></table>
+
+    <h2>Add an operator</h2>
+    <div class="row">
+      <input id="newAdmin" placeholder="username" autocapitalize="off" autocorrect="off" style="max-width:240px">
+      <button class="action" id="addAdmin">Add as admin</button>
+    </div>
+    <p class="muted" id="opNote">They must have signed in to Tayka at least once,
+      which is when their username exists. New operators start as admins.</p>
+
+    <h2>What an admin cannot do</h2>
+    <p class="muted">Read the backups, and see or change this screen. Everything
+      else an operator can do, an admin can do: reports, suspensions, removing
+      content, broadcasts, prompt overrides, browsing Tayks, premium and usage.</p>`;
+
+  const note = document.getElementById("opNote");
+  const say = (msg, bad) => {
+    note.textContent = msg;
+    note.className = bad ? "note" : "muted";
+  };
+
+  const run = async (fn, args, verb) => {
+    try {
+      const msg = await rpc(fn, args);
+      say(typeof msg === "string" ? msg : `${verb} done.`);
+      await renderOperators();
+    } catch (e) { say(e.message, true); }
+  };
+
+  document.getElementById("addAdmin").onclick = () => {
+    const name = document.getElementById("newAdmin").value.trim();
+    if (!name) { say("Type a username first.", true); return; }
+    run("add_admin", { p_username: name }, "Added");
+  };
+  main.querySelectorAll("[data-role]").forEach(b => b.onclick = () =>
+    run("set_admin_role", { p_username: b.dataset.user, p_role: b.dataset.role }, "Changed"));
+  main.querySelectorAll("[data-remove]").forEach(b => b.onclick = () => {
+    if (!confirm(`Remove @${b.dataset.remove} as an operator?`)) return;
+    run("remove_admin", { p_username: b.dataset.remove }, "Removed");
+  });
+}
+
 const TABS = { home: renderHome, reports: renderReports, prompts: renderPrompts,
                push: renderPush, inbox: renderInbox, premium: renderPremium,
-               content: renderContent, backups: renderBackups };
+               content: renderContent, backups: renderBackups,
+               usage: renderUsage, operators: renderOperators };
+
+//  Two tabs an admin does not get. The server refuses every call behind them
+//  whatever the nav says, so this is what the operator SEES rather than what
+//  they may do - the same relationship AdminStore.isAdmin has to is_admin().
+const OWNER_ONLY = new Set(["backups", "operators"]);
 
 //  Tabs are history entries, so Back means "the tab I was on" rather than
 //  "leave the console". Without this the first Back left the page entirely
@@ -2009,13 +2218,28 @@ async function boot() {
 
   if (!admin) { renderNotAdmin(); return; }
 
+  //  Owner is a second, narrower question, and it is asked separately rather
+  //  than inferred: is_admin() is deliberately unchanged by 115, so an owner
+  //  answers true to both and every ordinary gate keeps working. A failure to
+  //  answer is treated as "not an owner", which hides two tabs and refuses
+  //  nothing the server would have allowed - the safe direction.
+  let owner = false;
+  try { owner = await rpc("is_owner"); } catch { owner = false; }
+
   nav.hidden = false;
-  who.textContent = session.user.email ?? "";
+  nav.querySelectorAll("[data-tab]").forEach(b => {
+    if (OWNER_ONLY.has(b.dataset.tab)) b.hidden = !owner;
+  });
+  who.textContent = (session.user.email ?? "") + (owner ? " · owner" : " · admin");
 
   //  Sign-in comes back through an OAuth redirect whose hash carries the
   //  token, not a tab. Anything that is not a known tab means Home.
   const asked = (window.location.hash || "").replace(/^#/, "");
-  go(TABS[asked] ? asked : "home");
+  //  A hash is a way in that does not go past the nav, so it is checked here
+  //  too. The server refuses these calls regardless; this is what stops an
+  //  admin landing on a screen of errors and thinking the console is broken.
+  const allowed = TABS[asked] && (owner || !OWNER_ONLY.has(asked));
+  go(allowed ? asked : "home");
 }
 
 sb.auth.onAuthStateChange((event) => {
