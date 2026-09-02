@@ -328,7 +328,22 @@ async function rpc(name, args, opts = {}) {
 
   try {
     const { data, error } = await Promise.race([call, expiry]);
-    if (error) throw error;
+    if (error) {
+      //  A request that reached the server as nobody means the session is
+      //  gone: the token expired and could not be refreshed, or the tab
+      //  outlived a sign-out elsewhere. Every 30 seconds the Home counts
+      //  asked again and were refused again - 232 times in one evening -
+      //  under a page that still looked signed in. Stop asking and go back
+      //  to the door.
+      const asNobody = error.code === "PGRST301"
+        || /^permission denied for function/.test(error.message ?? "");
+      if (asNobody) {
+        clearInterval(homeTimer);
+        await sb.auth.signOut().catch(() => {});
+        renderSignIn("Your session ended. Sign in again.");
+      }
+      throw error;
+    }
     return data;
   } finally {
     clearTimeout(timer);
