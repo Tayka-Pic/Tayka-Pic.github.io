@@ -162,7 +162,11 @@
   .stat {
     background: var(--panel); border: 1px solid var(--hairline);
     border-radius: 12px; padding: 12px 14px;
+    text-align: left; color: inherit; font: inherit; width: 100%;
   }
+  button.stat { cursor: pointer; }
+  button.stat:hover { border-color: var(--accent); }
+  button.stat[aria-expanded="true"] { border-color: var(--accent); }
   .stat .n { font-size: 26px; font-weight: 700; line-height: 1.1; }
   .stat .n small { font-size: 15px; color: var(--secondary); font-weight: 400; }
   .stat .k { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--secondary); margin-top: 2px; }
@@ -285,15 +289,98 @@ function renderNotAdmin() {
 
 let homeTimer = null;
 
+//  A BACKGROUND REFRESH MUST NEVER DESTROY THE SCREEN.
+//
+//  The first version rendered every failure the same way - `main.innerHTML =
+//  the error` - which is right for a first load, when there is nothing to
+//  lose, and completely wrong for the thirty-second tick. One transient
+//  "NetworkError when attempting to fetch resource" and the whole console was
+//  replaced by a line of red text until the next tick happened to succeed.
+//
+//  That is the same family as the feed's own rules: a cancelled request is not
+//  a failed one, and a spinner is a claim that something is still coming. Here
+//  the claim being made falsely was "there is nothing to show you".
+//
+//  So a refresh that fails leaves what is on screen alone and says so quietly.
+//  Only a load with nothing behind it may take the page.
+function homeError(message, isRefresh) {
+  if (isRefresh) {
+    const note = document.getElementById("homeNote");
+    if (note) {
+      note.textContent = "Couldn't refresh just now. Showing the last figures.";
+      note.className = "note";
+    }
+    return;
+  }
+  main.innerHTML = `<p class="note">${esc(message)}</p>`;
+}
+
+//  A tile is a button when there is a list behind it, and a plain div when
+//  there is not - so "nothing happens" is never a thing the operator has to
+//  discover by tapping. `push devices` has no list on purpose: a page of APNs
+//  tokens tells nobody anything.
 function stat(n, label, opts = {}) {
-  return `<div class="stat ${opts.alert && n > 0 ? "alert" : ""}">
-    <div class="n">${esc(n)}${opts.of !== undefined ? ` <small>of ${esc(opts.of)}</small>` : ""}</div>
-    <div class="k">${esc(label)}</div>
+  const cls = `stat ${opts.alert && n > 0 ? "alert" : ""}`;
+  const inner = `<div class="n">${esc(n)}${opts.of !== undefined ? ` <small>of ${esc(opts.of)}</small>` : ""}</div>
+    <div class="k">${esc(label)}</div>`;
+  return opts.kind
+    ? `<button class="${cls}" data-detail="${esc(opts.kind)}" data-title="${esc(label)}"
+               aria-expanded="false">${inner}</button>`
+    : `<div class="${cls}">${inner}</div>`;
+}
+
+//  The rows behind a number, fetched only when somebody asks for them.
+//  `admin_dashboard` stays counts-only; this is the deliberate exception, and
+//  making it a tap is what keeps looking at a list of people a decision rather
+//  than something the screen does on its own every thirty seconds.
+async function showDetail(kind, title, button) {
+  const box = document.getElementById("detail");
+  if (!box) return;
+
+  const already = button.getAttribute("aria-expanded") === "true";
+  document.querySelectorAll("button.stat").forEach(b =>
+    b.setAttribute("aria-expanded", "false"));
+  if (already) { box.innerHTML = ""; return; }
+  button.setAttribute("aria-expanded", "true");
+
+  box.innerHTML = `<p class="muted">Loading…</p>`;
+  let rows;
+  try { rows = await rpc("admin_dashboard_detail", { p_kind: kind }); }
+  catch (e) { box.innerHTML = `<p class="note">${esc(e.message)}</p>`; return; }
+
+  if (!rows.length) {
+    box.innerHTML = `<div class="card"><p class="empty">Nothing to show for ${esc(title)}.</p></div>`;
+    return;
+  }
+
+  box.innerHTML = `<div class="card">
+    <div class="row"><strong>${esc(title)}</strong>
+      <span class="muted" style="margin-left:auto">${rows.length}${rows.length === 200 ? "+" : ""}</span></div>
+    <table>${rows.map(r => `
+      <tr>
+        <td>
+          <div>${esc(r.label)}</div>
+          ${r.detail ? `<div class="muted">${esc(r.detail)}</div>` : ""}
+        </td>
+        <td style="text-align:right; white-space:nowrap" class="muted">
+          ${esc(when(r.at))}
+        </td>
+      </tr>`).join("")}</table>
   </div>`;
 }
 
-async function renderHome() {
-  if (!main.querySelector(".stats")) {
+//  Time of day for things that happened today, a date for anything older.
+function when(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const sameDay = (new Date() - d) < 86400000;
+  return d.toLocaleString(undefined, sameDay
+    ? { hour: "numeric", minute: "2-digit" }
+    : { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+async function renderHome(isRefresh = false) {
+  if (!isRefresh && !main.querySelector(".stats")) {
     main.innerHTML = `<div class="muted">Loading…</div>`;
   }
 
@@ -305,7 +392,7 @@ async function renderHome() {
     d = (await rpc("admin_dashboard"))[0];
     const rated = await rpc("prompt_rating_summary", { p_from: d.today_index, p_days: 1 });
     todayRating = rated?.[0] ?? null;
-  } catch (e) { main.innerHTML = `<p class="note">${esc(e.message)}</p>`; return; }
+  } catch (e) { homeError(e.message, isRefresh); return; }
 
   main.innerHTML = `
     <h2>Today · day ${esc(d.today_index)}</h2>
@@ -320,15 +407,16 @@ async function renderHome() {
     </div>
 
     <div class="stats">
-      ${stat(d.posted_today, "posted today", { of: d.total_users })}
-      ${stat(d.posted_yesterday, "posted yesterday", { of: d.total_users })}
-      ${stat(d.new_users_today, "new today")}
-      ${stat(d.retayks_today, "retayks today")}
-      ${stat(d.comments_today, "comments today")}
-      ${stat(d.premium_accounts, "premium")}
+      ${stat(d.posted_today, "posted today", { of: d.total_users, kind: "posted_today" })}
+      ${stat(d.posted_yesterday, "posted yesterday", { of: d.total_users, kind: "posted_yesterday" })}
+      ${stat(d.new_users_today, "new today", { kind: "new_users_today" })}
+      ${stat(d.retayks_today, "retayks today", { kind: "retayks_today" })}
+      ${stat(d.comments_today, "comments today", { kind: "comments_today" })}
+      ${stat(d.premium_accounts, "premium", { kind: "premium_accounts" })}
       ${stat(d.push_devices, "push devices")}
-      ${stat(d.suspended_accounts, "suspended", { alert: true })}
+      ${stat(d.suspended_accounts, "suspended", { alert: true, kind: "suspended_accounts" })}
     </div>
+    <div id="detail"></div>
 
     <h2>Queues</h2>
     <div class="widgets">
@@ -354,19 +442,30 @@ async function renderHome() {
       </button>
     </div>
 
-    <p class="muted">Counts refresh every 30 seconds.</p>`;
+    <p class="muted" id="homeNote">Counts refresh every 30 seconds.</p>`;
 
   main.querySelectorAll("[data-go]").forEach(b => b.onclick = () => go(b.dataset.go));
+  main.querySelectorAll("[data-detail]").forEach(b => b.onclick = () =>
+    showDetail(b.dataset.detail, b.dataset.title, b));
 
   //  Only while this screen is up. A timer left running behind another tab
   //  would keep overwriting whatever the operator had opened.
+  //
+  //  It also skips a tick while the page is hidden. A backgrounded tab or a
+  //  home-screen web app that iOS has suspended is exactly where a fetch
+  //  fails, and refreshing something nobody is looking at buys nothing.
   clearInterval(homeTimer);
   homeTimer = setInterval(() => {
-    if (nav.querySelector('[data-tab="home"]').getAttribute("aria-current") === "true") {
-      renderHome();
-    } else {
-      clearInterval(homeTimer);
-    }
+    const onHome = nav.querySelector('[data-tab="home"]')
+                      .getAttribute("aria-current") === "true";
+    if (!onHome) { clearInterval(homeTimer); return; }
+    if (document.hidden) return;
+    //  And not while a drill-down is open. Re-rendering would take the list
+    //  the operator is reading out from under them - the same failure as the
+    //  one that used to replace this whole page with a network error, in a
+    //  smaller form. Counts resume the moment the list is closed.
+    if (document.getElementById("detail")?.innerHTML) return;
+    renderHome(true);
   }, 30000);
 }
 
