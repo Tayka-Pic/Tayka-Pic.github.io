@@ -156,13 +156,32 @@
   .tile:hover { border-color: var(--accent); }
   .tile .ph { aspect-ratio: 4/5; background: var(--ground); display: grid; place-items: center;
               color: var(--secondary); font-size: 12px; }
-  .tile img { width: 100%; max-width: 100%; max-height: none; aspect-ratio: 4/5;
+  /*  `:not(.face)` matters: a tile holds a Tayk AND, in its byline, a 22px
+      avatar. `.tile img` is more specific than `.face`, so without this the
+      face inherits width:100% and aspect-ratio 4/5 and renders as a wide
+      blue slab across the metadata.  */
+  .tile img:not(.face) { width: 100%; max-width: 100%; max-height: none; aspect-ratio: 4/5;
               object-fit: cover; display: block; margin: 0; border-radius: 0; }
   .tile .meta { padding: 8px 10px; font-size: 12px; line-height: 1.45; }
   .tile .meta b { color: var(--text); }
   /*  Looking at somebody's photograph is recorded. The screen says so, always,
       and not in a footnote -- an operator who does not know it is logged is an
       operator the log cannot deter.  */
+  /*  A face beside a name. Deliberately small: it is for recognition at a
+      glance, not a profile picture, and it must not out-weigh the username
+      it sits next to.  */
+  /*  Sized with !important because this element lives inside containers that
+      style their own images -- a tile, a card, a table cell -- and every one
+      of those selectors out-specifies a bare class. The alternative is
+      remembering to exclude .face from each of them for ever.  */
+  .face {
+    width: 22px !important; height: 22px !important; aspect-ratio: 1 !important;
+    max-width: 22px !important; max-height: 22px !important;
+    border-radius: 50%; object-fit: cover;
+    background: var(--ground); flex: 0 0 auto; vertical-align: -6px;
+    display: inline-block; border: 1px solid var(--hairline);
+  }
+  .face.blank { background: var(--ground); }
   .lognote { color: var(--secondary); font-size: 12px; margin: 0 0 12px;
              border-left: 2px solid var(--accent); padding-left: 10px; }
   .empty { color: var(--secondary); padding: 8px 0; }
@@ -394,13 +413,20 @@ async function showDetail(kind, title, button) {
     return;
   }
 
+  //  Every kind but pending_pushes is a list of people, and that one returns
+  //  null -- so no branch is a special case here, it just draws blank.
+  await signFaces(rows.map(r => r.avatar_path));
+
   box.innerHTML = `<div class="card">
     <div class="row"><strong>${esc(title)}</strong>
       <span class="muted" style="margin-left:auto">${rows.length}${rows.length === 200 ? "+" : ""}</span></div>
     <table>${rows.map(r => `
       <tr>
         <td>
-          <div>${esc(r.label)}</div>
+          <div class="row" style="gap:6px">
+            ${face(r.avatar_path, r.label)}
+            <span>${esc(r.label)}</span>
+          </div>
           ${r.detail ? `<div class="muted">${esc(r.detail)}</div>` : ""}
         </td>
         <td style="text-align:right; white-space:nowrap" class="muted">
@@ -625,6 +651,10 @@ async function renderReports() {
 
   //  One signing request for the whole page, the same reasoning
   //  PhotoDownloader gives: a page of photos should not be a round trip each.
+  //  Faces come from the avatars bucket and are signed separately -- see the
+  //  note on signFaces about why they do NOT go through admin-photo.
+  await signFaces(rows.flatMap(r => [r.reporter_avatar, r.reported_avatar]));
+
   const paths = rows.map(r => r.image_path).filter(Boolean);
   const signed = {};
   if (paths.length) {
@@ -645,8 +675,8 @@ async function renderReports() {
         : (r.image_path ? `<p class="muted">Photo unavailable.</p>` : "")}
       ${r.detail ? `<p>${esc(r.detail)}</p>` : ""}
       <p class="muted">${esc(r.reason)}
-        ${r.reported ? " · @" + esc(r.reported) : ""}
-        ${r.reporter ? " · reported by @" + esc(r.reporter) : ""}
+        ${r.reported ? ` · ${face(r.reported_avatar, r.reported)} @${esc(r.reported)}` : ""}
+        ${r.reporter ? ` · reported by ${face(r.reporter_avatar, r.reporter)} @${esc(r.reporter)}` : ""}
         ${r.pressure > 1 ? " · " + r.pressure + " different reporters this week" : ""}</p>
       <div class="row">
         <button class="danger" data-act="remove">Remove</button>
@@ -702,10 +732,13 @@ async function renderPremium() {
 
     if (!rows.length) { results.innerHTML = `<p class="empty">No account starts with that.</p>`; return; }
 
+    await signFaces(rows.map(r => r.avatar_path));
+
     results.innerHTML = `<div class="card"><table>` + rows.map(r => `
       <tr>
         <td>
           <div class="row">
+            ${face(r.avatar_path, r.username)}
             <strong>@${esc(r.username)}</strong>
             <span class="tag ${r.premium ? "" : "grey"}">${r.premium ? "PREMIUM" : "STANDARD"}</span>
             ${r.suspended ? '<span class="tag red">SUSPENDED</span>' : ""}
@@ -1198,6 +1231,59 @@ async function useAsPrompt(raw) {
 //  Shell
 
 // ---------------------------------------------------------------------------
+//  Faces
+// ---------------------------------------------------------------------------
+//  An avatar next to a username, so an operator can tell two accounts apart
+//  without reading them.
+//
+//  These are signed through ORDINARY storage, NOT through admin-photo, and the
+//  difference is deliberate. Avatars are the first exception to the reveal
+//  gate and have been since 12_profiles_and_avatars.sql: readable by any
+//  signed-in user, because Friends search is a column of blank circles
+//  otherwise. So an operator seeing a face reaches past nothing, and routing
+//  them through the logging function would fill admin_photo_access with rows
+//  about images anybody can already fetch -- drowning the ones that matter.
+//  The log is narrow because what it records is narrow.
+//
+//  One request per page, cached for the session. An avatar path never changes
+//  its bytes (each upload writes a new random filename), so a URL is good
+//  until it expires and re-signing the same face on every render is waste.
+const faceCache = new Map();
+
+async function signFaces(paths) {
+  const want = [...new Set(paths.filter(Boolean))].filter(p => !faceCache.has(p));
+  if (want.length) {
+    try {
+      //  Chunked: createSignedUrls takes a list, and a page of 200 rows is a
+      //  bigger request than the API wants in one go.
+      for (let i = 0; i < want.length; i += 100) {
+        const slice = want.slice(i, i + 100);
+        const { data } = await sb.storage.from("avatars").createSignedUrls(slice, 3600);
+        (data ?? []).forEach(d => { if (d.path) faceCache.set(d.path, d.signedUrl ?? null); });
+        //  A path the API declined is remembered as a miss, so the next render
+        //  does not ask again and the blank circle is drawn immediately.
+        slice.forEach(pth => { if (!faceCache.has(pth)) faceCache.set(pth, null); });
+      }
+    } catch {
+      //  A face is a convenience. Failing to sign one must never take down the
+      //  list it decorates, so every path just stays unknown and draws blank.
+      want.forEach(pth => faceCache.set(pth, null));
+    }
+  }
+  return faceCache;
+}
+
+//  Drawn for EVERY row, with or without a photo: a circle that appears only
+//  sometimes makes the column jump and reads as a rendering fault rather than
+//  as an account with no picture.
+function face(path, alt) {
+  const url = path ? faceCache.get(path) : null;
+  return url
+    ? `<img class="face" src="${esc(url)}" alt="${esc(alt ?? "")}" loading="lazy">`
+    : `<span class="face blank" aria-hidden="true"></span>`;
+}
+
+// ---------------------------------------------------------------------------
 //  Content
 // ---------------------------------------------------------------------------
 //  Full read access to posts, comments and accounts, and any photo can be
@@ -1349,6 +1435,7 @@ async function contentPosts(filters, body) {
     p_username: contentFilters.username || null,
     p_limit: 24, p_offset: 0,
   });
+  await signFaces(rows.map(r => r.avatar_path));
 
   if (!rows.length) { body.innerHTML = `<p class="empty">No Tayks match.</p>`; return; }
 
@@ -1363,7 +1450,8 @@ async function contentPosts(filters, body) {
         <button class="tile" data-post="${esc(r.id)}" data-path="${esc(r.image_path)}">
           <div class="ph" data-slot="${esc(r.image_path)}">day ${esc(r.day_index)}</div>
           <div class="meta">
-            <b>@${esc(r.username)}</b>${r.suspended ? ` <span class="tag red">suspended</span>` : ""}<br>
+            ${face(r.avatar_path, r.username)} <b>@${esc(r.username)}</b>${
+              r.suspended ? ` <span class="tag red">suspended</span>` : ""}<br>
             ${esc(r.prompt ?? "")}<br>
             <span class="muted">${esc(r.comment_count)}c · ${esc(r.like_count)}l${
               r.retayk_count > 0 ? ` · ${esc(r.retayk_count)} ReTayk` : ""}</span>
@@ -1429,11 +1517,14 @@ async function openPost(id) {
   try { urls = await signPhotos(paths, `opened @${post.username}'s Tayk`); }
   catch (e) { signErr = e.message; }
 
+  await signFaces([post.avatar_path, ...comments.map(c => c.avatar_path)]);
+
   main.innerHTML = `
     <button class="quiet" id="back">← Back</button>
     <div class="card">
       <div class="row">
         <span class="tag">day ${esc(post.day_index)}</span>
+        ${face(post.avatar_path, post.username)}
         <b>@${esc(post.username)}</b>
         ${post.enters_top_tayk ? `<span class="tag grey">Hot Tayk entry</span>` : ""}
       </div>
@@ -1453,6 +1544,7 @@ async function openPost(id) {
     <h2>Comments · ${comments.length}</h2>
     ${comments.length ? comments.map(c => `
       <div class="card">
+        ${face(c.avatar_path, c.username)}
         <b>@${esc(c.username)}</b>
         <span class="muted"> · ${esc(new Date(c.at).toLocaleString())}</span>
         <p>${esc(c.body)}</p>
@@ -1474,10 +1566,12 @@ async function contentComments(filters, body) {
     p_search: contentFilters.search || null,
     p_limit: 100, p_offset: 0,
   });
+  await signFaces(rows.map(c => c.avatar_path));
 
   body.innerHTML = rows.length ? rows.map(c => `
     <div class="card">
       <div class="row">
+        ${face(c.avatar_path, c.username)}
         <b>@${esc(c.username)}</b>
         <span class="muted">on @${esc(c.post_author)}'s day ${esc(c.post_day)}</span>
         <button class="quiet" data-post="${esc(c.post_id)}">open the Tayk</button>
@@ -1499,11 +1593,12 @@ async function contentPeople(filters, body) {
   const rows = await rpc("admin_browse_users", {
     p_query: contentFilters.username || null, p_limit: 100, p_offset: 0,
   });
+  await signFaces(rows.map(u => u.avatar_path));
 
   body.innerHTML = rows.length ? `<div class="card"><table>
     <tr><th>account</th><th>Tayks</th><th>friends</th><th>last Tayk</th><th></th></tr>
     ${rows.map(u => `<tr>
-      <td><b>@${esc(u.username)}</b>
+      <td>${face(u.avatar_path, u.username)} <b>@${esc(u.username)}</b>
         ${u.suspended ? ` <span class="tag red">suspended</span>` : ""}
         ${u.is_premium ? ` <span class="tag">premium</span>` : ""}</td>
       <td>${esc(u.post_count)}</td>
