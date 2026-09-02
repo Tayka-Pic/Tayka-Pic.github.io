@@ -134,7 +134,37 @@
   .tag.grey { background: var(--secondary); }
   .tag.red  { background: var(--danger); }
   .muted { color: var(--secondary); font-size: 13px; }
-  .shot { max-width: 100%; border-radius: 10px; margin: 10px 0; display: block; }
+  /*  A Tayk is 1440px on its long edge and portrait more often than not, so
+      without a height cap one photo is several screens of scrolling and the
+      comments under it are unreachable. Shared with the Reports queue, which
+      has the same problem for the same reason.  */
+  .shot { max-width: 100%; max-height: 70vh; width: auto; border-radius: 10px;
+          margin: 10px 0; display: block; }
+  .subnav { display: flex; gap: 4px; margin: 0 0 14px; flex-wrap: wrap; }
+  .subnav button {
+    background: none; border: 1px solid var(--hairline); color: var(--secondary);
+    border-radius: 999px; padding: 5px 12px; font: inherit; font-size: 13px; cursor: pointer;
+  }
+  .subnav button[aria-current="true"] { background: var(--panel); color: var(--text); border-color: var(--accent); }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .tile { background: var(--panel); border: 1px solid var(--hairline); border-radius: 10px;
+          overflow: hidden; text-align: left; padding: 0; cursor: pointer; color: inherit; font: inherit;
+          display: flex; flex-direction: column; }
+  /*  The grid stretches every tile to the tallest, so without this the meta
+      blocks float at different heights and the row reads as misaligned.  */
+  .tile .meta { margin-top: auto; }
+  .tile:hover { border-color: var(--accent); }
+  .tile .ph { aspect-ratio: 4/5; background: var(--ground); display: grid; place-items: center;
+              color: var(--secondary); font-size: 12px; }
+  .tile img { width: 100%; max-width: 100%; max-height: none; aspect-ratio: 4/5;
+              object-fit: cover; display: block; margin: 0; border-radius: 0; }
+  .tile .meta { padding: 8px 10px; font-size: 12px; line-height: 1.45; }
+  .tile .meta b { color: var(--text); }
+  /*  Looking at somebody's photograph is recorded. The screen says so, always,
+      and not in a footnote -- an operator who does not know it is logged is an
+      operator the log cannot deter.  */
+  .lognote { color: var(--secondary); font-size: 12px; margin: 0 0 12px;
+             border-left: 2px solid var(--accent); padding-left: 10px; }
   .empty { color: var(--secondary); padding: 8px 0; }
   .note { color: var(--danger); }
   .center { text-align: center; padding: 60px 20px; }
@@ -207,6 +237,7 @@
   <nav id="nav" hidden>
     <button data-tab="home" aria-current="true">Home</button>
     <button data-tab="reports">Reports</button>
+    <button data-tab="content">Content</button>
     <button data-tab="prompts">Prompts</button>
     <button data-tab="push">Push</button>
     <button data-tab="inbox">Inbox</button>
@@ -1165,10 +1196,353 @@ async function useAsPrompt(raw) {
 
 // ---------------------------------------------------------------------------
 //  Shell
+
+// ---------------------------------------------------------------------------
+//  Content
+// ---------------------------------------------------------------------------
+//  Full read access to posts, comments and accounts, and any photo can be
+//  opened. That is a deliberate widening -- everything else an operator can do
+//  in Tayka is narrow -- and the thing that makes it defensible is that every
+//  photo opened is RECORDED, before the URL is issued.
+//
+//  So two rules shape this screen:
+//
+//  1. THE LIST IS TEXT AND THE PHOTO IS A TAP. Auto-loading a grid of
+//     photographs would write fifty log rows for a glance and make the log
+//     useless for answering "who looked at this". It is the same reasoning
+//     admin_dashboard_detail already gives about its own drill-down: making it
+//     a tap keeps looking at people a decision rather than something the screen
+//     does on its own. It also keeps egress down, which is the bill that
+//     decides what Tayka costs to run.
+//
+//  2. THE SCREEN SAYS IT IS LOGGED. Every time. An operator who does not know
+//     is an operator the log cannot deter, and deterrence is most of its value.
+
+let contentMode = "posts";
+let contentFilters = { day: "", username: "", search: "" };
+
+//  Signing goes through the admin-photo Edge Function, never through
+//  createSignedUrls directly: the function writes the access record first and
+//  refuses to sign if it cannot. The console could not do that itself, which
+//  is the whole reason the function exists.
+async function signPhotos(paths, context) {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) throw new Error("signed out");
+
+  const r = await fetch(`${SUPABASE_URL}/functions/v1/admin-photo`, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${session.access_token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ paths, context, bucket: "post-photos" }),
+  });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.error || `signing failed (${r.status})`);
+  return body.urls || {};
+}
+
+//  A thumbnail is a twentieth of the bytes, and photos posted before the
+//  storage policy was fixed have none -- so both paths are signed and the
+//  full-size one is the onerror fallback. A miss must never leave a spinner.
+const thumbOf = (path) => path.replace(/\.jpg$/, "-t.jpg");
+
+function photoImg(url, fallback, alt) {
+  //  A photo that will never arrive must not draw as one that is still coming.
+  //  Same rule as PhotoPlaceholder in the app: the missing third state gets its
+  //  own picture, never a spinner and never an empty box.
+  if (!url) return `<div class="ph">unavailable</div>`;
+  //  The fallback URL travels in a data attribute rather than inside an inline
+  //  onerror. A signed URL is long, contains & and =, and building executable
+  //  JavaScript around it by string concatenation is a quoting bug waiting for
+  //  the one URL that has the wrong character in it.
+  //  `shot` is what caps the size. Without it a Tayk renders at its natural
+  //  1440px and drives straight through the card and off the page -- which is
+  //  invisible in a fixture with small images and obvious with a real one.
+  //  `.tiles img` overrides the cap inside a grid tile, so one class serves both.
+  return `<img src="${esc(url)}" alt="${esc(alt)}" class="shot needsFallback"` +
+         (fallback ? ` data-fallback="${esc(fallback)}"` : "") + `>`;
+}
+
+//  Called after any innerHTML that may contain photoImg output.
+function wirePhotoFallbacks(root) {
+  root.querySelectorAll("img.needsFallback").forEach(img => {
+    img.classList.remove("needsFallback");
+    img.addEventListener("error", () => {
+      const fb = img.dataset.fallback;
+      if (fb && !img.dataset.triedFallback) {
+        img.dataset.triedFallback = "1";
+        img.src = fb;
+        return;
+      }
+      const div = document.createElement("div");
+      div.className = "ph";
+      div.textContent = "unavailable";
+      img.replaceWith(div);
+    });
+  });
+}
+
+async function renderContent() {
+  main.innerHTML = `
+    <div class="subnav" id="cnav">
+      <button data-mode="posts">Tayks</button>
+      <button data-mode="comments">Comments</button>
+      <button data-mode="people">People</button>
+      <button data-mode="access">Access log</button>
+    </div>
+    <div id="cfilters"></div>
+    <div id="cbody"><p class="muted">Loading…</p></div>`;
+
+  main.querySelectorAll("#cnav button").forEach(b => {
+    b.setAttribute("aria-current", String(b.dataset.mode === contentMode));
+    b.onclick = () => { contentMode = b.dataset.mode; renderContent(); };
+  });
+
+  const filters = document.getElementById("cfilters");
+  const body = document.getElementById("cbody");
+
+  try {
+    if (contentMode === "posts")    await contentPosts(filters, body);
+    if (contentMode === "comments") await contentComments(filters, body);
+    if (contentMode === "people")   await contentPeople(filters, body);
+    if (contentMode === "access")   await contentAccess(filters, body);
+  } catch (e) {
+    body.innerHTML = `<p class="note">${esc(e.message)}</p>`;
+  }
+}
+
+function filterBar(fields, onApply) {
+  return `<div class="row" style="margin-bottom:12px">
+    ${fields.map(f => `<input id="${f.id}" placeholder="${esc(f.ph)}"
+        value="${esc(f.value ?? "")}" style="max-width:${f.w || 170}px">`).join("")}
+    <button id="applyBtn">Search</button>
+    <button class="quiet" id="clearBtn">Clear</button>
+  </div>`;
+}
+
+function wireFilters(ids, apply) {
+  const run = () => {
+    ids.forEach(id => contentFilters[id] = document.getElementById(id)?.value.trim() ?? "");
+    apply();
+  };
+  document.getElementById("applyBtn").onclick = run;
+  ids.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.onkeydown = (e) => { if (e.key === "Enter") run(); };
+  });
+  document.getElementById("clearBtn").onclick = () => {
+    ids.forEach(id => contentFilters[id] = "");
+    apply();
+  };
+}
+
+async function contentPosts(filters, body) {
+  filters.innerHTML = filterBar([
+    { id: "day", ph: "day index", value: contentFilters.day, w: 110 },
+    { id: "username", ph: "username", value: contentFilters.username },
+  ]);
+  wireFilters(["day", "username"], renderContent);
+
+  const rows = await rpc("admin_browse_posts", {
+    p_day: contentFilters.day ? Number(contentFilters.day) : null,
+    p_username: contentFilters.username || null,
+    p_limit: 24, p_offset: 0,
+  });
+
+  if (!rows.length) { body.innerHTML = `<p class="empty">No Tayks match.</p>`; return; }
+
+  body.innerHTML = `
+    <p class="lognote">Opening a photo records who opened it, and when.
+      Details are text until you ask for the picture.</p>
+    <div class="row" style="margin-bottom:12px">
+      <button class="quiet" id="showAll">Show photos for all ${rows.length}</button>
+    </div>
+    <div class="tiles">
+      ${rows.map(r => `
+        <button class="tile" data-post="${esc(r.id)}" data-path="${esc(r.image_path)}">
+          <div class="ph" data-slot="${esc(r.image_path)}">day ${esc(r.day_index)}</div>
+          <div class="meta">
+            <b>@${esc(r.username)}</b>${r.suspended ? ` <span class="tag red">suspended</span>` : ""}<br>
+            ${esc(r.prompt ?? "")}<br>
+            <span class="muted">${esc(r.comment_count)}c · ${esc(r.like_count)}l${
+              r.retayk_count > 0 ? ` · ${esc(r.retayk_count)} ReTayk` : ""}</span>
+          </div>
+        </button>`).join("")}
+    </div>`;
+
+  //  One tile, one deliberate look.
+  body.querySelectorAll(".tile").forEach(t => {
+    t.onclick = () => openPost(t.dataset.post);
+  });
+
+  document.getElementById("showAll").onclick = async (e) => {
+    e.target.disabled = true;
+    e.target.textContent = "Loading…";
+    try {
+      const paths = rows.map(r => r.image_path).filter(Boolean);
+      const urls = await signPhotos(
+        [...paths, ...paths.map(thumbOf)],
+        `browsed ${rows.length} Tayks`);
+      rows.forEach(r => {
+        const slot = body.querySelector(`[data-slot="${CSS.escape(r.image_path)}"]`);
+        if (!slot) return;
+        const full = urls[r.image_path], thumb = urls[thumbOf(r.image_path)];
+        slot.outerHTML = photoImg(thumb || full, thumb ? full : null, `@${r.username}`);
+      });
+      wirePhotoFallbacks(body);
+      e.target.textContent = `${paths.length} photos loaded and logged`;
+    } catch (err) {
+      e.target.disabled = false;
+      e.target.textContent = "Show photos for all";
+      body.insertAdjacentHTML("afterbegin", `<p class="note">${esc(err.message)}</p>`);
+    }
+  };
+}
+
+async function openPost(id) {
+  main.innerHTML = `<p class="muted">Loading…</p>`;
+  let d;
+  try { d = await rpc("admin_post_detail", { p_post: id }); }
+  catch (e) { main.innerHTML = `<p class="note">${esc(e.message)}</p>`; return; }
+
+  //  A post can be deleted between listing it and opening it, and a report
+  //  outliving its content is the ordinary case. Draw the empty state.
+  //
+  //  Guarded on what this function actually NEEDS, not on whether the reply
+  //  was null. admin_post_detail returns SQL NULL for a missing post, which
+  //  arrives as null -- but a `!d` check alone passes anything else truthy
+  //  straight through to `d.post.image_path` and throws on a screen whose
+  //  whole job is to say the Tayk is gone.
+  if (!d || !d.post) {
+    main.innerHTML = `<button class="quiet" id="back">← Back</button>
+      <div class="card"><p class="empty">That Tayk no longer exists.</p></div>`;
+    document.getElementById("back").onclick = renderContent;
+    return;
+  }
+
+  const post = d.post, comments = d.comments || [], retayks = d.retayks || [];
+  let urls = {};
+  let signErr = null;
+  const paths = [post.image_path, thumbOf(post.image_path),
+                 ...retayks.map(r => r.image_path)].filter(Boolean);
+  try { urls = await signPhotos(paths, `opened @${post.username}'s Tayk`); }
+  catch (e) { signErr = e.message; }
+
+  main.innerHTML = `
+    <button class="quiet" id="back">← Back</button>
+    <div class="card">
+      <div class="row">
+        <span class="tag">day ${esc(post.day_index)}</span>
+        <b>@${esc(post.username)}</b>
+        ${post.enters_top_tayk ? `<span class="tag grey">Hot Tayk entry</span>` : ""}
+      </div>
+      <p class="muted">${esc(PROMPT_LEAD)} ${esc(post.prompt ?? "")}</p>
+      ${signErr ? `<p class="note">${esc(signErr)}</p>`
+                : photoImg(urls[post.image_path], null, `@${post.username}`)}
+      ${post.caption ? `<p><b>@${esc(post.username)}:</b> “${esc(post.caption)}”</p>` : ""}
+      <p class="muted">${esc(new Date(post.created_at).toLocaleString())}</p>
+    </div>
+
+    ${retayks.length ? `<h2>ReTayks</h2><div class="tiles">${retayks.map(r => `
+      <div class="tile" style="cursor:default">
+        ${photoImg(urls[r.image_path], null, "ReTayk")}
+        <div class="meta">slot ${esc(r.slot)}${r.caption ? `<br>“${esc(r.caption)}”` : ""}</div>
+      </div>`).join("")}</div>` : ""}
+
+    <h2>Comments · ${comments.length}</h2>
+    ${comments.length ? comments.map(c => `
+      <div class="card">
+        <b>@${esc(c.username)}</b>
+        <span class="muted"> · ${esc(new Date(c.at).toLocaleString())}</span>
+        <p>${esc(c.body)}</p>
+      </div>`).join("") : `<p class="empty">No comments.</p>`}`;
+
+  wirePhotoFallbacks(main);
+  document.getElementById("back").onclick = renderContent;
+}
+
+async function contentComments(filters, body) {
+  filters.innerHTML = filterBar([
+    { id: "username", ph: "username", value: contentFilters.username },
+    { id: "search", ph: "text contains", value: contentFilters.search, w: 220 },
+  ]);
+  wireFilters(["username", "search"], renderContent);
+
+  const rows = await rpc("admin_browse_comments", {
+    p_username: contentFilters.username || null,
+    p_search: contentFilters.search || null,
+    p_limit: 100, p_offset: 0,
+  });
+
+  body.innerHTML = rows.length ? rows.map(c => `
+    <div class="card">
+      <div class="row">
+        <b>@${esc(c.username)}</b>
+        <span class="muted">on @${esc(c.post_author)}'s day ${esc(c.post_day)}</span>
+        <button class="quiet" data-post="${esc(c.post_id)}">open the Tayk</button>
+      </div>
+      <p>${esc(c.body)}</p>
+      <p class="muted">${esc(new Date(c.at).toLocaleString())}</p>
+    </div>`).join("") : `<p class="empty">No comments match.</p>`;
+
+  body.querySelectorAll("[data-post]").forEach(b =>
+    b.onclick = () => openPost(b.dataset.post));
+}
+
+async function contentPeople(filters, body) {
+  filters.innerHTML = filterBar([
+    { id: "username", ph: "username starts with", value: contentFilters.username, w: 220 },
+  ]);
+  wireFilters(["username"], renderContent);
+
+  const rows = await rpc("admin_browse_users", {
+    p_query: contentFilters.username || null, p_limit: 100, p_offset: 0,
+  });
+
+  body.innerHTML = rows.length ? `<div class="card"><table>
+    <tr><th>account</th><th>Tayks</th><th>friends</th><th>last Tayk</th><th></th></tr>
+    ${rows.map(u => `<tr>
+      <td><b>@${esc(u.username)}</b>
+        ${u.suspended ? ` <span class="tag red">suspended</span>` : ""}
+        ${u.is_premium ? ` <span class="tag">premium</span>` : ""}</td>
+      <td>${esc(u.post_count)}</td>
+      <td>${esc(u.friend_count)}</td>
+      <td class="muted">${u.last_post_at ? esc(new Date(u.last_post_at).toLocaleDateString()) : "never"}</td>
+      <td><button class="quiet" data-user="${esc(u.username)}">their Tayks</button></td>
+    </tr>`).join("")}
+  </table></div>` : `<p class="empty">Nobody matches.</p>`;
+
+  body.querySelectorAll("[data-user]").forEach(b => b.onclick = () => {
+    contentMode = "posts";
+    contentFilters = { day: "", username: b.dataset.user, search: "" };
+    renderContent();
+  });
+}
+
+async function contentAccess(filters, body) {
+  filters.innerHTML = "";
+  const rows = await rpc("list_photo_access", { p_limit: 200 });
+
+  body.innerHTML = `
+    <p class="lognote">Every photo an operator opened outside the reveal gate.
+      Written before the picture is served, and no operator can delete a row.</p>
+    ${rows.length ? `<div class="card"><table>
+      <tr><th>when</th><th>who</th><th>photo</th><th>context</th></tr>
+      ${rows.map(a => `<tr>
+        <td class="muted">${esc(new Date(a.at).toLocaleString())}</td>
+        <td><b>@${esc(a.admin ?? "deleted account")}</b></td>
+        <td class="muted">${esc(a.image_path)}</td>
+        <td class="muted">${esc(a.context ?? "")}</td>
+      </tr>`).join("")}
+    </table></div>` : `<p class="empty">No photo has been opened yet.</p>`}`;
+}
+
 // ---------------------------------------------------------------------------
 
 const TABS = { home: renderHome, reports: renderReports, prompts: renderPrompts,
-               push: renderPush, inbox: renderInbox, premium: renderPremium };
+               push: renderPush, inbox: renderInbox, premium: renderPremium,
+               content: renderContent };
 
 function go(tab) {
   nav.querySelectorAll("button").forEach(b =>
