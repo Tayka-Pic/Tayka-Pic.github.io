@@ -339,9 +339,9 @@
     </li>
   </ol>
 
-  <p class="invited">Someone sent you here? Their username will be in the
-  message, so <strong>search for it once you're in</strong> and their Tayks
-  will show up in your feed.</p>
+  <p class="invited" id="invited">Someone sent you here? Their username will be
+  in the message, so <strong>search for it once you're in</strong> and their
+  Tayks will show up in your feed.</p>
 
   <div class="status">
     <span class="badge">Coming soon</span>
@@ -371,5 +371,22 @@
 
 </div>
 
+<script>
+  //  An invite link carries the sender's code as ?invite=ABCDEF. Show it
+  //  here, because the person reading this page is about to install the app
+  //  and the code is the one thing they need to carry across. Six characters
+  //  from an alphabet with no I, O, 0 or 1; anything else is ignored.
+  (function () {
+    var code = new URLSearchParams(location.search).get("invite") || "";
+    code = code.trim().toUpperCase();
+    if (!/^[A-HJ-NP-Z2-9]{6}$/.test(code)) return;
+    var p = document.getElementById("invited");
+    if (!p) return;
+    p.innerHTML = "Someone sent you here, and their invite code is " +
+      "<strong style=\"letter-spacing:0.12em;font-family:ui-monospace,SFMono-Regular,Menlo,monospace\">" +
+      code + "</strong>. After you sign up, enter it under " +
+      "<strong>Find your people</strong> and you're friends straight away.";
+  })();
+</script>
 </body>
 </html>
