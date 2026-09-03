@@ -270,7 +270,7 @@
     <button data-tab="prompts">Prompts</button>
     <button data-tab="push">Push</button>
     <button data-tab="inbox">Inbox</button>
-    <button data-tab="premium">Premium</button>
+    <button data-tab="accounts">Accounts</button>
     <button data-tab="usage">Usage</button>
     <button data-tab="backups">Backups</button>
     <button data-tab="operators">Operators</button>
@@ -757,9 +757,9 @@ async function renderHome(isRefresh = false) {
         <h3>Prompts</h3>
         <div class="sub">calendar and overrides</div>
       </button>
-      <button class="widget" data-go="premium">
-        <h3>Premium</h3>
-        <div class="sub">search an account, switch it</div>
+      <button class="widget" data-go="accounts">
+        <h3>Accounts</h3>
+        <div class="sub">premium and suspension, by name</div>
       </button>
       ${backupWidget(backup, backupErr)}
     </div>
@@ -916,12 +916,17 @@ async function renderReports() {
 
 async function renderPremium() {
   main.innerHTML = `
-    <h2>Premium</h2>
+    <h2>Accounts</h2>
     <div class="card">
       <div class="row">
         <input id="q" placeholder="username" autocapitalize="off" autocorrect="off" style="flex:1">
         <button class="action" id="go">Search</button>
       </div>
+      <p class="muted">One search, and both things you can do to an account.
+      Premium unlocks the accent colours and the home screen icons and costs the
+      person nothing; a purchase cannot be switched off, because the App Store
+      would restore it anyway. Suspending hides everything that account has
+      posted from everybody except them, for 24 hours.</p>
       <p class="muted">Wildcards are escaped on the server, so a stray % finds
       nothing rather than everybody.</p>
     </div>
@@ -952,16 +957,44 @@ async function renderPremium() {
           <div class="muted">${esc(r.source ? sourceLabel(r.source) : "joined " + day(r.joined))}</div>
         </td>
         <td style="text-align:right; white-space:nowrap">
-          ${r.premium && r.source === "purchase"
+          <div>${r.premium && r.source === "purchase"
             ? `<span class="muted">cannot be revoked</span>`
             : `<button class="${r.premium ? "danger" : "quiet"}" data-user="${esc(r.username)}"
-                 data-on="${r.premium ? 0 : 1}">${r.premium ? "Make standard" : "Make premium"}</button>`}
+                 data-on="${r.premium ? 0 : 1}">${r.premium ? "Make standard" : "Make premium"}</button>`}</div>
+          <div><button class="${r.suspended ? "quiet" : "danger"}"
+                 data-suspend="${esc(r.username)}" data-hours="${r.suspended ? 0 : 24}"
+               >${r.suspended ? "Lift suspension" : "Suspend 24h"}</button></div>
         </td>
       </tr>`).join("") + `</table></div>`;
 
     results.querySelectorAll("[data-user]").forEach(b => b.onclick = async () => {
       try {
         await rpc("set_premium", { p_username: b.dataset.user, p_on: b.dataset.on === "1" });
+        search();
+      } catch (e) { alert(e.message); }
+    });
+
+    //  Suspension, by hand, for somebody who was not reported through the app.
+    //  The console had no way to do this at all: set_suspension was reachable
+    //  only from a row in the Reports queue, so an operator who knew a name and
+    //  had no report about it could do nothing here.
+    //
+    //  24 hours is the only length offered. It is what the automatic
+    //  three-reporter suspension uses, and 65 argues that a reversible measure
+    //  short enough to be wrong cheaply is the whole point. A suspension is a
+    //  timestamp rather than a flag: nothing runs when it ends, the comparison
+    //  simply stops being true.
+    //
+    //  Re-searching afterwards rather than assuming, because the badge on the
+    //  row has to change and only the server knows whether it did.
+    results.querySelectorAll("[data-suspend]").forEach(b => b.onclick = async () => {
+      const name = b.dataset.suspend, hours = Number(b.dataset.hours);
+      if (hours > 0 && !confirm(
+            `Suspend @${name} for 24 hours?\n\n` +
+            `Everything they have posted is hidden from everybody except them ` +
+            `until it lapses. They are not told.`)) return;
+      try {
+        await rpc("set_suspension", { name, hours });
         search();
       } catch (e) { alert(e.message); }
     });
@@ -2268,7 +2301,11 @@ async function renderOperators() {
 }
 
 const TABS = { home: renderHome, reports: renderReports, prompts: renderPrompts,
-               push: renderPush, inbox: renderInbox, premium: renderPremium,
+               push: renderPush, inbox: renderInbox, accounts: renderPremium,
+               //  The old name still routes: #premium is a link somebody may
+               //  have kept, and a dead hash lands them on Home with no
+               //  explanation. One line is cheaper than that.
+               premium: renderPremium,
                content: renderContent, backups: renderBackups,
                usage: renderUsage, operators: renderOperators };
 
@@ -2287,6 +2324,11 @@ const OWNER_ONLY = new Set(["backups", "operators"]);
 //  history of somewhere you never went.
 function go(tab, opts = {}) {
   if (!TABS[tab]) tab = "home";
+  //  This tab was called Premium before it grew suspension. The old name still
+  //  routes, in TABS, so a kept link is not a dead end - but it is normalised
+  //  here so the nav highlights the right button and the URL reads true rather
+  //  than leaving somebody on a screen no tab appears to be selected for.
+  if (tab === "premium") tab = "accounts";
   nav.querySelectorAll("button").forEach(b =>
     b.setAttribute("aria-current", String(b.dataset.tab === tab)));
 
