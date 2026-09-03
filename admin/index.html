@@ -2020,30 +2020,75 @@ async function renderBackups() {
 
 let usageDays = 30;
 
-function usageBar(d, tallest) {
+//  The three bands, as one place rather than three literals. "Did not open"
+//  was `var(--hairline)`, #232b42 on a #08090f ground: readable as a tall band
+//  and invisible as a 12px legend swatch, so the key looked like it had two
+//  entries and a gap. A dimmed `--secondary` reads on both.
+const USAGE_BANDS = {
+  posted: { fill: "var(--accent)",    opacity: 1,   name: "Posted",
+            note: "Answered the prompt." },
+  opened: { fill: "var(--accent)",    opacity: .4,  name: "Opened, no Tayk",
+            note: "Came back and left without posting." },
+  absent: { fill: "var(--secondary)", opacity: .35, name: "Did not open",
+            note: "Did not open Tayka at all." },
+};
+
+function usageBar(d, tallest, i) {
   const total = Math.max(d.total_users, 1);
   const h = (n) => `${(n / total) * 100}%`;
-  //  Posted, then opened-without-posting, then absent, bottom to top. The band
-  //  that matters most shares an edge with the axis so it can be compared
-  //  across days by eye.
+  const seg = (b, n) => `<div style="height:${h(n)};background:${b.fill};opacity:${b.opacity}"></div>`;
+  //  Posted at the bottom so the band that matters most shares an edge with
+  //  the axis and can be compared across days by eye.
   const posted = d.opened_and_posted + d.posted_not_opened;
-  const when = new Date(d.day_start).toLocaleDateString(undefined,
-                 { month: "short", day: "numeric" });
-  return `<div class="ubar" title="${esc(when)} — ${esc(posted)} posted, ${esc(d.opened_not_posted)} opened only, ${esc(d.neither)} absent, of ${esc(d.total_users)}"
+  return `<div class="ubar" data-i="${i}" tabindex="0"
        style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;
-              height:${(total / Math.max(tallest, 1)) * 100}%;min-width:4px">
-    <div style="height:${h(d.neither)};background:var(--hairline)"></div>
-    <div style="height:${h(d.opened_not_posted)};background:var(--accent);opacity:.4"></div>
-    <div style="height:${h(posted)};background:var(--accent)"></div>
+              height:${(total / Math.max(tallest, 1)) * 100}%;min-width:4px;
+              cursor:default;outline-offset:2px">
+    ${seg(USAGE_BANDS.absent, d.neither)}
+    ${seg(USAGE_BANDS.opened, d.opened_not_posted)}
+    ${seg(USAGE_BANDS.posted, posted)}
   </div>`;
 }
 
-function usageKey(colour, name, detail, opacity) {
-  return `<div class="row" style="align-items:flex-start;gap:8px;margin-bottom:6px">
-    <span style="width:12px;height:12px;border-radius:3px;flex:0 0 auto;margin-top:3px;
-                 background:${colour};opacity:${opacity ?? 1}"></span>
-    <div><strong>${esc(name)}</strong><div class="sub">${esc(detail)}</div></div>
-  </div>`;
+const usageDate = (iso, long) => new Date(iso).toLocaleDateString(undefined,
+  long ? { weekday: "short", month: "short", day: "numeric" }
+       : { month: "short", day: "numeric" });
+
+//  One line per band in the key, drawn from the same table the bars use.
+function usageKey() {
+  return Object.values(USAGE_BANDS).map(b => `
+    <div class="row" style="align-items:flex-start;gap:8px;margin-bottom:6px">
+      <span style="width:12px;height:12px;border-radius:3px;flex:0 0 auto;margin-top:3px;
+                   background:${b.fill};opacity:${b.opacity}"></span>
+      <div><strong>${esc(b.name)}</strong><div class="sub">${esc(b.note)}</div></div>
+    </div>`).join("");
+}
+
+//  What the reader is told above the chart, and the reason it is three cases
+//  rather than one sentence about today.
+//
+//  `opened` is zero both when nobody came and when opens are not being
+//  RECORDED, and those are completely different facts. app_opens is written by
+//  a build that has not shipped, so every day reads zero - and "nobody has
+//  opened Tayka yet today" is then a false alarm about the busiest week the
+//  app has had. Same missing-third-state shape as a spinner standing in for a
+//  photo that will never arrive.
+function usageHeadline(days, latest) {
+  const everOpened = days.some(d => d.opened > 0);
+  if (!everOpened) {
+    return `<p class="muted">No app opens have been recorded yet, on any day in
+      this window, so the <strong>Opened</strong> and <strong>Did not open</strong>
+      bands are empty and the totals below read zero. Recording starts with the
+      first build that contains it. The <strong>Posted</strong> band and the
+      account totals are real and current.</p>`;
+  }
+  if (!latest.opened) {
+    return `<p class="muted">Nobody has opened Tayka yet today. ${esc(latest.total_users)} accounts exist.</p>`;
+  }
+  const rate = Math.round((latest.opened_and_posted / latest.opened) * 100);
+  return `<p class="muted">Today <strong>${esc(latest.opened)}</strong> of
+    ${esc(latest.total_users)} opened Tayka and <strong>${esc(latest.opened_and_posted)}</strong>
+    of those posted, which is <strong>${esc(rate)}%</strong>.</p>`;
 }
 
 async function renderUsage() {
@@ -2057,53 +2102,82 @@ async function renderUsage() {
       ${[7, 30, 90].map(n =>
         `<button data-days="${n}" aria-current="${n === usageDays}">${n} days</button>`).join("")}
     </div>`;
+  const wirePicker = () => main.querySelectorAll("#unav button").forEach(b =>
+    b.onclick = () => { usageDays = Number(b.dataset.days); renderUsage(); });
 
   if (!days || days.length === 0) {
     main.innerHTML = `<h2>Usage</h2>${picker}
       <p class="muted">No usage recorded yet. Opens are recorded from the build that
       added them, so this fills in from today forward.</p>`;
-    main.querySelectorAll("#unav button").forEach(b =>
-      b.onclick = () => { usageDays = Number(b.dataset.days); renderUsage(); });
+    wirePicker();
     return;
   }
 
   const latest = days[days.length - 1];
   const tallest = Math.max(...days.map(d => d.total_users), 1);
-  const rate = latest.opened ? Math.round((latest.opened_and_posted / latest.opened) * 100) : null;
 
-  const headline = rate === null
-    ? `<p class="muted">Nobody has opened Tayka yet today.</p>`
-    : `<p class="muted">Today <strong>${esc(latest.opened)}</strong> of
-       ${esc(latest.total_users)} opened Tayka and <strong>${esc(latest.opened_and_posted)}</strong>
-       of those posted, which is <strong>${esc(rate)}%</strong>.</p>`;
+  //  A label every so often rather than on all ninety. Each cell is flex:1 to
+  //  match a bar, so the dates line up with the columns they name whatever the
+  //  window is.
+  const every = Math.max(1, Math.ceil(days.length / 6));
+  const axis = days.map((d, i) =>
+    `<div style="flex:1;min-width:4px;text-align:center;overflow:visible;white-space:nowrap">
+       ${i % every === 0 || i === days.length - 1 ? esc(usageDate(d.day_start)) : ""}
+     </div>`).join("");
 
-  main.innerHTML = `<h2>Usage</h2>${picker}${headline}
-    <div style="display:flex;gap:2px;align-items:flex-end;height:180px;
+  main.innerHTML = `<h2>Usage</h2>${picker}
+    ${usageHeadline(days, latest)}
+
+    <div id="uread" class="muted" style="min-height:20px;margin-bottom:6px">
+      Hover a bar for that day.</div>
+
+    <div id="ubars" style="display:flex;gap:2px;align-items:flex-end;height:180px;
                 border-bottom:1px solid var(--hairline);padding-bottom:2px">
-      ${days.map(d => usageBar(d, tallest)).join("")}
+      ${days.map((d, i) => usageBar(d, tallest, i)).join("")}
+    </div>
+    <div style="display:flex;gap:2px;margin-top:6px;font-size:11px;color:var(--secondary)">
+      ${axis}
     </div>
     <p class="muted" style="margin-top:6px">Oldest on the left. Bar height is the
       accounts that existed that day, so the bars grow as Tayka does.</p>
 
     <h2>What the bands mean</h2>
-    ${usageKey("var(--accent)", "Posted", "Answered the prompt.")}
-    ${usageKey("var(--accent)", "Opened, no Tayk", "Came back and left without posting.", .4)}
-    ${usageKey("var(--hairline)", "Did not open", "Did not open Tayka at all.")}
+    ${usageKey()}
 
     <h2>The numbers</h2>
     <table><tbody>
       <tr><td class="muted">Day</td><td class="muted">Posted</td>
           <td class="muted">Opened</td><td class="muted">Accounts</td><td class="muted">New</td></tr>
       ${days.slice().reverse().map(d => `<tr>
-        <td>${esc(new Date(d.day_start).toLocaleDateString(undefined, { month: "short", day: "numeric" }))}</td>
+        <td>${esc(usageDate(d.day_start))}</td>
         <td>${esc(d.opened_and_posted + d.posted_not_opened)}</td>
         <td>${esc(d.opened)}</td>
         <td>${esc(d.total_users)}</td>
         <td>${esc(d.new_users)}</td></tr>`).join("")}
     </tbody></table>`;
 
-  main.querySelectorAll("#unav button").forEach(b =>
-    b.onclick = () => { usageDays = Number(b.dataset.days); renderUsage(); });
+  //  Hover and keyboard focus both fill the readout. The bars carry tabindex,
+  //  so a keyboard reaches every day the mouse can - a chart whose only way in
+  //  is a pointer is a chart half the people cannot read.
+  const readout = document.getElementById("uread");
+  const idle = "Hover a bar for that day.";
+  const show = (i) => {
+    const d = days[i];
+    const posted = d.opened_and_posted + d.posted_not_opened;
+    const rate = d.opened ? ` · ${Math.round((d.opened_and_posted / d.opened) * 100)}% of openers posted` : "";
+    readout.innerHTML = `<strong>${esc(usageDate(d.day_start, true))}</strong> ·
+      ${esc(posted)} posted · ${esc(d.opened_not_posted)} opened without posting ·
+      ${esc(d.neither)} did not open · ${esc(d.total_users)} accounts${esc(rate)}`;
+  };
+  main.querySelectorAll("#ubars .ubar").forEach(b => {
+    const i = Number(b.dataset.i);
+    b.addEventListener("mouseenter", () => show(i));
+    b.addEventListener("focus", () => show(i));
+    b.addEventListener("mouseleave", () => { readout.textContent = idle; });
+    b.addEventListener("blur", () => { readout.textContent = idle; });
+  });
+
+  wirePicker();
 }
 
 // ---------------------------------------------------------------------------
