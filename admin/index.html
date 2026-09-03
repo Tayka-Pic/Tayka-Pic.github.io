@@ -98,7 +98,16 @@
     border-bottom: 1px solid var(--hairline);
     position: sticky; top: 0; background: var(--ground); z-index: 10;
   }
-  .wordmark { font-weight: 900; letter-spacing: 0.23em; font-size: 15px; }
+  /*  A link, not a label. Clicking the wordmark is the oldest convention on
+      the web and it did nothing here, which reads as the page being broken.
+      Keeps the wordmark's exact look: colour inherited, no underline. */
+  .wordmark {
+    font-weight: 900; letter-spacing: 0.23em; font-size: 15px;
+    color: inherit; text-decoration: none; cursor: pointer;
+    background: none; border: 0; padding: 0; font-family: inherit;
+  }
+  .wordmark:hover { opacity: 0.75; }
+  .wordmark:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
   nav { display: flex; gap: 4px; flex-wrap: wrap; margin-left: auto; }
   nav button {
     background: none; border: 0; color: var(--secondary); cursor: pointer;
@@ -252,7 +261,7 @@
 <body>
 
 <header>
-  <span class="wordmark">TAYKA</span>
+  <button type="button" class="wordmark" id="home-link" aria-label="Tayka home">TAYKA</button>
   <span class="muted" id="who"></span>
   <nav id="nav" hidden>
     <button data-tab="home" aria-current="true">Home</button>
@@ -293,6 +302,16 @@ const PROMPT_LEAD = "Tayka pic of";
 const main = document.getElementById("main");
 const nav  = document.getElementById("nav");
 const who  = document.getElementById("who");
+
+//  Whether the person looking at this page is an operator at all, which is the
+//  server's answer from `is_admin()` and not a guess from what is on screen.
+//  Distinct from `owner` in boot(), which is the narrower second question.
+//
+//  It exists because the wordmark has two correct destinations and `nav.hidden`
+//  cannot tell them apart: a signed-in NON-operator was shown the nav too, so
+//  keying on it would send somebody who is not an operator to the operator's
+//  home tab. Set in exactly the three places that settle the question.
+let isOperator = false;
 
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, c => (
   { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -375,6 +394,7 @@ function errorWithRetry(box, message, retry) {
 //  without any linking step.
 
 function renderSignIn(message) {
+  isOperator = false;
   nav.hidden = true;
   who.textContent = "";
   main.innerHTML = `
@@ -394,11 +414,26 @@ function renderSignIn(message) {
 }
 
 function renderNotAdmin() {
-  nav.hidden = false;
+  isOperator = false;
+  //  The nav is the OPERATOR's nav, and this account is not one. Showing it
+  //  offered Reports, Content, Push and the rest to somebody every one of
+  //  those RPCs will refuse: controls that look live and do nothing, on the
+  //  page that has just finished saying nothing here is available to it. It
+  //  was only visible so a non-operator could sign out, so that moves into
+  //  the page.
+  nav.hidden = true;
+  who.textContent = "";
   main.innerHTML = `<div class="center">
     <p>Signed in, but this account is not an operator.</p>
     <p class="muted">Nothing here is available to it. That is the server's
-    answer, not this page's.</p></div>`;
+    answer, not this page's.</p>
+    <p><button class="action" id="not-admin-out">Sign out</button></p>
+    <p class="muted"><a href="../">Back to tayka.app</a></p>
+  </div>`;
+  document.getElementById("not-admin-out").onclick = async () => {
+    await sb.auth.signOut();
+    renderSignIn();
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -2200,6 +2235,16 @@ nav.addEventListener("click", async (e) => {
   go(tab);
 });
 
+//  The wordmark means "home", and home is a different place depending on who
+//  is looking. An operator is already in the console, so it is the Home tab -
+//  which every operator has, owner or not, so this needs no second check.
+//  Anybody else, signed out or signed in without operator rights, is on a page
+//  with nothing for them, so home is the public site.
+document.getElementById("home-link").addEventListener("click", () => {
+  if (isOperator) { go("home"); return; }
+  window.location.href = "../";
+});
+
 window.addEventListener("popstate", (e) => {
   //  Only steer when signed in. Popping back to the sign-in screen is a real
   //  destination for somebody who has just signed out.
@@ -2226,6 +2271,7 @@ async function boot() {
   let owner = false;
   try { owner = await rpc("is_owner"); } catch { owner = false; }
 
+  isOperator = true;
   nav.hidden = false;
   nav.querySelectorAll("[data-tab]").forEach(b => {
     if (OWNER_ONLY.has(b.dataset.tab)) b.hidden = !owner;
