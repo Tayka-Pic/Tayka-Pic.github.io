@@ -147,14 +147,23 @@
     line-height: 1.5;
   }
 
-  .status {
-    border: 1px solid var(--hairline);
+  /*
+    The beta card. This is the one thing a visitor can DO, so it is the only
+    filled button on the page and everything else stays bordered.
+
+    White on this blue is about 3.1:1, which is why the fill takes
+    --on-accent rather than white — the same token Theme.onAccent exists for
+    in the app, and the same reason: reaching for white here would put
+    unreadable type on the page's only real call to action.
+  */
+  .beta {
+    border: 1px solid var(--accent);
     border-radius: 14px;
-    padding: 22px 24px;
-    text-align: center;
+    padding: 24px;
+    background: var(--panel);
   }
 
-  .status .badge {
+  .badge {
     display: inline-block;
     font-size: 11px;
     font-weight: 700;
@@ -164,20 +173,65 @@
     margin-bottom: 8px;
   }
 
-  .status p {
+  .beta h2 {
+    font-size: 19px;
+    font-weight: 700;
+    margin: 0 0 8px;
+  }
+
+  .beta p {
     margin: 0;
     color: var(--secondary);
     font-size: 15.5px;
   }
 
   /*
+    Numbered for the same reason the rules above are: it is a sequence, and
+    the second step needs the first. Two steps, because anything longer reads
+    as difficult.
+  */
+  .steps {
+    margin: 16px 0 20px;
+    padding-left: 20px;
+    color: var(--secondary);
+    font-size: 15.5px;
+  }
+  .steps li + li { margin-top: 6px; }
+  .steps strong { color: var(--text); font-weight: 600; }
+
+  .cta {
+    display: block;
+    text-align: center;
+    font-weight: 700;
+    font-size: 16.5px;
+    padding: 14px 24px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: var(--on-accent);
+    text-decoration: none;
+  }
+  .cta:hover { filter: brightness(1.08); }
+
+  .fineprint {
+    margin: 12px 0 0;
+    color: var(--secondary);
+    font-size: 13.5px;
+    text-align: center;
+    opacity: 0.9;
+  }
+
+  /*
     The one thing a visitor can actually do.
 
-    Deliberately more than a footer link. Until there is an App Store listing
-    this page offers no action at all — the status box above it says "coming
-    soon" and that is a dead end — so the suggestion form is the only live
-    thing on tayka.app, and it sits directly under the sentence that explains
-    why there is nothing to download yet.
+    Secondary to the beta card above it, and bordered rather than filled for
+    that reason: there is exactly one filled button on this page and it is
+    the one that hands somebody the app.
+
+    It used to be the only live thing on tayka.app, back when the status box
+    said "coming soon" and that was a dead end. It is worth keeping in its
+    own card anyway. A prompt suggestion needs no account and no install, so
+    it is the one thing a visitor can do from a desktop browser, which is
+    where a good share of this page is read.
 
     Bordered rather than a filled accent button, which is what a call to
     action usually gets. White on this blue is around 3.3:1, fine for large
@@ -216,7 +270,7 @@
   }
   .suggest-link:hover {
     background: var(--accent);
-    color: var(--ground);
+    color: var(--on-accent);
   }
 
   .invited {
@@ -340,14 +394,24 @@
     </li>
   </ol>
 
-  <p class="invited" id="invited">Someone sent you here? Their username will be
-  in the message, so <strong>search for it once you're in</strong> and their
-  Tayks will show up in your feed.</p>
-
-  <div class="status">
-    <span class="badge">Coming soon</span>
-    <p>Tayka is in the final stretch before the App Store. iPhone first.</p>
+  <div class="beta">
+    <span class="badge">Open beta</span>
+    <h2>Try Tayka before the App Store</h2>
+    <p>It is in the final stretch, and the beta is open to anyone with an
+    iPhone running iOS 17 or later. Two steps, and both are free.</p>
+    <ol class="steps">
+      <li>Install <a href="https://apps.apple.com/app/testflight/id899247664">TestFlight</a>,
+      which is Apple's own app for trying apps early.</li>
+      <li>Tap <strong>Join the beta</strong> below, then Accept.</li>
+    </ol>
+    <a class="cta" href="https://testflight.apple.com/join/JTt3CXHC">Join the beta</a>
+    <p class="fineprint">Open this page on your iPhone for that link to work.</p>
   </div>
+
+  <p class="invited" id="invited">Someone sent you here? Tayka asks who invited
+  you right after you sign up. Put in their <strong>invite code</strong> and
+  you are friends straight away. Their <strong>username</strong> works there
+  too, and sends them a friend request.</p>
 
   <div class="suggest">
     <h2>Suggest a prompt</h2>
@@ -377,6 +441,13 @@
   //  here, because the person reading this page is about to install the app
   //  and the code is the one thing they need to carry across. Six characters
   //  from an alphabet with no I, O, 0 or 1; anything else is ignored.
+  //
+  //  The default sentence above describes both ways in, because most people
+  //  reading this page arrived without a code. Somebody who arrived WITH one
+  //  needs only their own, so the line is replaced rather than added to, and
+  //  the screen it is entered on is not named: the field appears in two
+  //  places with different headings, and naming one of them is how this
+  //  paragraph went stale the first time.
   (function () {
     var code = new URLSearchParams(location.search).get("invite") || "";
     code = code.trim().toUpperCase();
@@ -385,8 +456,8 @@
     if (!p) return;
     p.innerHTML = "Someone sent you here, and their invite code is " +
       "<strong style=\"letter-spacing:0.12em;font-family:ui-monospace,SFMono-Regular,Menlo,monospace\">" +
-      code + "</strong>. After you sign up, enter it under " +
-      "<strong>Find your people</strong> and you're friends straight away.";
+      code + "</strong>. Tayka asks who invited you right after you sign up. " +
+      "Enter it there and you are friends straight away.";
   })();
 </script>
 </body>
