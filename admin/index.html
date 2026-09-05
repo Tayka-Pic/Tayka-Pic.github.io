@@ -2116,7 +2116,34 @@ function usageHeadline(days, latest) {
       account totals are real and current.</p>`;
   }
   if (!latest.opened) {
+    if (latest.opened_and_posted + latest.posted_not_opened > 0) {
+      return `<p class="muted">No opens recorded today, though
+        <strong>${esc(latest.posted_not_opened + latest.opened_and_posted)}</strong>
+        posted. Opens come only from the build that added them.</p>`;
+    }
     return `<p class="muted">Nobody has opened Tayka yet today. ${esc(latest.total_users)} accounts exist.</p>`;
+  }
+  //  A FOURTH CASE, AND THE LONGEST-LIVED ONE. The all-zero check above covers
+  //  the day nothing is recorded; it says nothing about the far longer stretch
+  //  where SOME builds record and some do not, which is where this sits now.
+  //
+  //  You cannot post without opening the app, so `posted_not_opened` is a
+  //  direct and undeniable measure of under-recording, and its lower bound. On
+  //  the day this was written it was three accounts with opens against nine who
+  //  posted, and the sentence below would have read "3 of 28 opened Tayka" on a
+  //  busy day, on the one screen built to say whether the app is growing.
+  //
+  //  It resolves itself as testers update, which is precisely why it has to be
+  //  said out loud: a wrong number that will be right eventually is read as a
+  //  right number today.
+  if (latest.posted_not_opened > 0) {
+    const posted = latest.opened_and_posted + latest.posted_not_opened;
+    return `<p class="muted">Opens are <strong>under-counted</strong> today:
+      <strong>${esc(latest.posted_not_opened)}</strong> posted with no open
+      recorded, and posting requires opening. Only devices on the build that
+      added opens write a row, so treat the rate as a floor until testers
+      update. <strong>${esc(posted)}</strong> of ${esc(latest.total_users)}
+      posted, and that figure is exact.</p>`;
   }
   const rate = Math.round((latest.opened_and_posted / latest.opened) * 100);
   return `<p class="muted">Today <strong>${esc(latest.opened)}</strong> of
