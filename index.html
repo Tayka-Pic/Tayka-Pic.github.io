@@ -394,7 +394,15 @@
     </li>
   </ol>
 
-  <div class="beta">
+  <!--
+    The beta card, and the App Store card it becomes.
+
+    What is written here is the TestFlight version, so the page is correct
+    with JavaScript off, which is how it is today. The script at the bottom
+    rewrites this whole block the moment APP_STORE_ID is set. See the comment
+    beside that constant: setting it is the entire launch-day edit.
+  -->
+  <div class="beta" id="get">
     <span class="badge">Open beta</span>
     <h2>Try Tayka before the App Store</h2>
     <p>It is in the final stretch, and the beta is open to anyone with an
@@ -437,6 +445,40 @@
 </div>
 
 <script>
+  //  ===================================================================
+  //   LAUNCH DAY IS THIS ONE LINE.
+  //  ===================================================================
+  //
+  //  Apple's numeric app id, from App Store Connect (App Information ->
+  //  General Information -> Apple ID). Leave it empty and the page offers the
+  //  TestFlight beta, which is what is written in the markup above and is
+  //  therefore what a visitor with JavaScript off sees. Set it and the card
+  //  above becomes a Download on the App Store button instead.
+  //
+  //  Once the listing is live and the beta is closed, delete the TestFlight
+  //  markup in #get and leave this script as the only version. Until then the
+  //  markup is the honest fallback.
+  //
+  //  NOTE the app's `ExternalLinks.landing` deliberately keeps pointing at
+  //  this page rather than at the listing, because an invite link carries
+  //  ?invite= and ?u= and an App Store URL can carry neither. This card is
+  //  what changes at launch, not that constant.
+  var APP_STORE_ID = "";
+
+  (function () {
+    if (!/^[0-9]{6,12}$/.test(APP_STORE_ID)) return;
+    var card = document.getElementById("get");
+    if (!card) return;
+    card.innerHTML =
+      '<span class="badge">Out now</span>' +
+      '<h2>Get Tayka</h2>' +
+      '<p>One photo prompt a day. Everyone, everywhere, at once. ' +
+      'iPhone, iOS 17 or later.</p>' +
+      '<a class="cta" style="margin-top:20px" ' +
+      'href="https://apps.apple.com/app/id' + APP_STORE_ID + '">' +
+      'Download on the App Store</a>';
+  })();
+
   //  An invite link carries BOTH halves: ?invite=ABCDEF&u=noah.
   //
   //  The handle is the one that survives, which is why it is here at all. A
