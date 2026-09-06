@@ -409,9 +409,9 @@
   </div>
 
   <p class="invited" id="invited">Someone sent you here? Tayka asks who invited
-  you right after you sign up. Put in their <strong>invite code</strong> and
-  you are friends straight away. Their <strong>username</strong> works there
-  too, and sends them a friend request.</p>
+  you right after you sign up. Put in their <strong>username</strong> and they
+  get a friend request. If they sent an <strong>invite code</strong> as well,
+  that works there too and skips the wait.</p>
 
   <div class="suggest">
     <h2>Suggest a prompt</h2>
@@ -437,27 +437,51 @@
 </div>
 
 <script>
-  //  An invite link carries the sender's code as ?invite=ABCDEF. Show it
-  //  here, because the person reading this page is about to install the app
-  //  and the code is the one thing they need to carry across. Six characters
-  //  from an alphabet with no I, O, 0 or 1; anything else is ignored.
+  //  An invite link carries BOTH halves: ?invite=ABCDEF&u=noah.
   //
-  //  The default sentence above describes both ways in, because most people
-  //  reading this page arrived without a code. Somebody who arrived WITH one
-  //  needs only their own, so the line is replaced rather than added to, and
-  //  the screen it is entered on is not named: the field appears in two
-  //  places with different headings, and naming one of them is how this
-  //  paragraph went stale the first time.
+  //  The handle is the one that survives, which is why it is here at all. A
+  //  code has to make it through the App Store round trip in somebody's head
+  //  or on their clipboard, and neither is dependable: this page cannot copy
+  //  on its own (clipboard writes need a user gesture, and Safari is the
+  //  strict case), and anything copied before a five minute download can be
+  //  replaced before it is used. So when the code is gone, expired or used
+  //  up, the page can still name the person who sent them.
+  //
+  //  Both are validated against the same alphabets the app uses, and both
+  //  are inserted into innerHTML - so the validation IS the escaping. A
+  //  username is [a-z0-9._]{3,20} and a code is six of A-H J-N P-Z 2-9;
+  //  neither can express a tag, a quote or an ampersand. Loosen either regex
+  //  and this becomes an injection, so build the string with textContent
+  //  instead if that day comes.
   (function () {
-    var code = new URLSearchParams(location.search).get("invite") || "";
-    code = code.trim().toUpperCase();
-    if (!/^[A-HJ-NP-Z2-9]{6}$/.test(code)) return;
+    var q = new URLSearchParams(location.search);
+
+    var code = (q.get("invite") || "").trim().toUpperCase();
+    if (!/^[A-HJ-NP-Z2-9]{6}$/.test(code)) code = "";
+
+    var user = (q.get("u") || "").trim().toLowerCase();
+    if (!/^[a-z0-9._]{3,20}$/.test(user)) user = "";
+
+    if (!code && !user) return;
+
     var p = document.getElementById("invited");
     if (!p) return;
-    p.innerHTML = "Someone sent you here, and their invite code is " +
-      "<strong style=\"letter-spacing:0.12em;font-family:ui-monospace,SFMono-Regular,Menlo,monospace\">" +
-      code + "</strong>. Tayka asks who invited you right after you sign up. " +
-      "Enter it there and you are friends straight away.";
+
+    var mono = "letter-spacing:0.12em;font-family:ui-monospace,SFMono-Regular,Menlo,monospace";
+    var who = user ? "<strong>@" + user + "</strong>" : "Someone";
+    var out = who + " sent you here. Tayka asks who invited you right after " +
+              "you sign up.";
+
+    if (user) {
+      out += " Put in <strong>@" + user + "</strong> and they get a friend " +
+             "request.";
+    }
+    if (code) {
+      out += (user ? " Or use their code " : " Enter their code ") +
+             "<strong style=\"" + mono + "\">" + code + "</strong>" +
+             (user ? " and skip the wait." : " and you are friends straight away.");
+    }
+    p.innerHTML = out;
   })();
 </script>
 </body>
